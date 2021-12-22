@@ -195,7 +195,8 @@ const (
 )
 
 const (
-	ftePextFloatCoords uint32 = 0x00008000
+	ftePextFloatCoords  uint32 = 0x00008000
+	ftePextSpawnStatic2 uint32 = 0x00400000 // Sends an entity delta instead of a baseline (or spawnstatic). Obsoleted by PEXT2_REPLACEMENTDELTAS.
 )
 
 const (
@@ -264,7 +265,7 @@ const (
 	svc_particle
 	svc_damage
 	svc_spawnstatic
-	svc_spawnstatic2_UNUSED
+	svc_fte_spawnstatic2
 	svc_spawnbaseline
 	svc_temp_entity
 	svc_setpause
@@ -309,7 +310,7 @@ const (
 	svc_unused_63
 	svc_unused_64
 	svc_unused_65
-	svc_unused_66
+	svc_fte_spawnbaseline2
 	svc_unused_67
 	svc_unused_68
 	svc_unused_69

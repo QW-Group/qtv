@@ -13,6 +13,10 @@ import (
 // QW protocol reader (deserializer).
 //
 
+var (
+	nullEntityState entityState
+)
+
 func (qp *qProtocol) readServerData() (err error) {
 	defer func() { err = multierror.Prefix(err, "qProtocol.readServerData:") }()
 
@@ -267,12 +271,23 @@ func (qp *qProtocol) readEntityState(es *entityState) {
 	}
 }
 
-func (qp *qProtocol) readBaseLine() error {
-	entNum := qp.r.GetUint16()
-	if entNum >= maxEntities {
-		return errors.New("readBaseline: maxEntities")
+func (qp *qProtocol) readBaseLine(delta bool) error {
+	if delta {
+		if (qp.extFlagsFTE1 & ftePextSpawnStatic2) == 0 {
+			return errors.New("readBaseLine: (delta) ftePextSpawnStatic2 flag is not set")
+		}
+		entNum, flags := qp.readEntityNum()
+		if entNum >= maxEntities {
+			return errors.New("readBaseline: (delta) maxEntities")
+		}
+		qp.readEntityDelta(&nullEntityState, &qp.baseLine[entNum], flags, false)
+	} else {
+		entNum := qp.r.GetUint16()
+		if entNum >= maxEntities {
+			return errors.New("readBaseline: maxEntities")
+		}
+		qp.readEntityState(&qp.baseLine[entNum])
 	}
-	qp.readEntityState(&qp.baseLine[entNum])
 	return nil
 }
 
@@ -302,11 +317,20 @@ func (qp *qProtocol) readInterMission() error {
 	return nil
 }
 
-func (qp *qProtocol) readSpawnStatic() error {
-	if qp.spawnStaticCount >= maxStaticEntities {
-		return errors.New("readSpawnStatic: maxStaticEntities")
+func (qp *qProtocol) readSpawnStatic(delta bool) error {
+	if delta && (qp.extFlagsFTE1&ftePextSpawnStatic2) == 0 {
+		return fmt.Errorf("readSpawnStatic: (delta = %v) ftePextSpawnStatic2 flag is not set", delta)
 	}
-	qp.readEntityState(&qp.spawnStatic[qp.spawnStaticCount])
+	if qp.spawnStaticCount >= maxStaticEntities {
+		return fmt.Errorf("readSpawnStatic: (delta = %v) maxStaticEntities", delta)
+	}
+
+	if delta {
+		_, flags := qp.readEntityNum()
+		qp.readEntityDelta(&nullEntityState, &qp.spawnStatic[qp.spawnStaticCount], flags, false)
+	} else {
+		qp.readEntityState(&qp.spawnStatic[qp.spawnStaticCount])
+	}
 	qp.spawnStaticCount += 1
 	return nil
 }
@@ -909,9 +933,13 @@ func (qp *qProtocol) readMessageForSvc() error {
 	case svc_damage:
 		return qp.readDamage()
 	case svc_spawnstatic:
-		return qp.readSpawnStatic()
+		return qp.readSpawnStatic(false)
+	case svc_fte_spawnstatic2:
+		return qp.readSpawnStatic(true)
 	case svc_spawnbaseline:
-		return qp.readBaseLine()
+		return qp.readBaseLine(false)
+	case svc_fte_spawnbaseline2:
+		return qp.readBaseLine(true)
 	case svc_temp_entity:
 		return qp.readTempEntity()
 	case svc_setpause:
