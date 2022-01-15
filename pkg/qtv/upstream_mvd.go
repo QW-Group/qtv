@@ -346,10 +346,6 @@ func (us *uStream) parseMVDMessage(b []byte, demoSpeed float64, isLowLatency boo
 	// We will set parseTime to nextPacketTime after fully packet parse. Do NOT set it right now!!!
 	nextPacketTime := us.parseTime + uint64(packetTime)
 
-	if nextPacketTime >= us.curTime && !isLowLatency {
-		return true, 0, 0, nil
-	}
-
 	var (
 		length    int
 		lengthOfs int
