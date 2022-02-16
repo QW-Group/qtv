@@ -176,9 +176,9 @@ const (
 	maxEntityFrames       = 64
 	maxDemoPacketEntities = 300
 	maxEntities           = 512
-	maxStaticEntities     = 128
+	maxStaticEntities     = 512
 	maxLightStyles        = 64
-	maxStaticSounds       = 64
+	maxStaticSounds       = 512
 	maxStats              = 32
 )
 
