@@ -1,19 +1,26 @@
 package qtv
 
 import (
+	"fmt"
 	"html/template"
 	"io/fs"
+	"io/ioutil"
 	stdlog "log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
+	"github.com/adam-lavrik/go-imath/ix"
 	"github.com/gorilla/mux"
 	"github.com/hashicorp/go-multierror"
 	"github.com/rs/zerolog/log"
 	"github.com/soheilhy/cmux"
+	"go.uber.org/atomic"
 )
 
 //
@@ -25,6 +32,8 @@ type httpSv struct {
 	mainTemplate       *template.Template // Base html template.
 	demosTemplate      *template.Template // Demos html template, derived from the base.
 	nowPlayingTemplate *template.Template // Now playing html template, derived from the base.
+	upload             atomic.Bool        // True if upload is active.
+	lastUpload         time.Time          // Time of last upload start.
 }
 
 func newHttpSv(qtv *QTV) *httpSv {
@@ -39,9 +48,12 @@ func newHttpSv(qtv *QTV) *httpSv {
 
 func (sv *httpSv) regVars(qtv *QTV) {
 	qtv.qvs.RegEx("http_enabled", "1", qVarFlagInitOnly, nil)
-	qtv.qvs.RegEx("http_readtimeout", "15", qVarFlagInitOnly, nil)
+	qtv.qvs.RegEx("http_readtimeout", "45", qVarFlagInitOnly, nil)
 	qtv.qvs.RegEx("http_writetimeout", "600", qVarFlagInitOnly, nil)
 	qtv.qvs.RegEx("http_idletimeout", "60", qVarFlagInitOnly, nil)
+	qtv.qvs.RegEx("http_upload_enabled", "1", qVarFlagInitOnly, nil)
+	qtv.qvs.RegEx("http_upload_total_limit", 1024*1024*64, qVarFlagInitOnly, nil)
+	qtv.qvs.RegEx("http_upload_file_limit", 1024*1024*32, qVarFlagInitOnly, nil)
 	qtv.qvs.RegEx("http_server_cert_file", "", qVarFlagInitOnly, nil)
 	qtv.qvs.RegEx("http_server_key_file", "", qVarFlagInitOnly, nil)
 }
@@ -63,6 +75,18 @@ func (sv *httpSv) writeTimeOut() time.Duration {
 // Limit is up to 60 seconds.
 func (sv *httpSv) idleTimeOut() time.Duration {
 	return durationBound(1, sv.qtv.qvs.Get("http_idletimeout").Dur, 60) * time.Second
+}
+
+func (sv *httpSv) uploadEnabled() bool {
+	return sv.qtv.qvs.Get("http_upload_enabled").Bool
+}
+
+func (sv *httpSv) uploadTotalLimit() int64 {
+	return i64Bound(1024*1024*1, int64(sv.qtv.qvs.Get("http_upload_total_limit").Float), 1024*1024*1024*2)
+}
+
+func (sv *httpSv) uploadFileLimit() int64 {
+	return i64Bound(1024*1024*1, int64(sv.qtv.qvs.Get("http_upload_file_limit").Float), 1024*1024*128)
 }
 
 type mainTemplateData struct {
@@ -154,6 +178,12 @@ func (sv *httpSv) prepare() (err error) {
 	qtvDemos := `
 {{define "qtvBody"}}
 <h1>QuakeTV: Demo Listing</h1>
+<center>
+<form enctype="multipart/form-data" action="/upload/" method="post">
+	<input type="file" name="file" />
+	<input type="submit" value="upload demo" />
+</form>
+</center>
 <table id="demos" cellspacing="0">
 	<thead>
 		<tr>
@@ -290,6 +320,97 @@ func (sv *httpSv) prepare() (err error) {
 	return nil
 }
 
+func sanitizeUploadFileName(name string) string {
+	b := []byte(strings.TrimSuffix(name, ".mvd"))
+	b = b[:ix.Min(len(b), 128)] // Truncate name.
+
+	for i := 0; i < len(b); i++ {
+		r := rune(b[i])
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' || r == '[' || r == ']' {
+			continue
+		}
+		b[i] = '_'
+	}
+
+	return string(b)
+}
+
+func (sv *httpSv) uploadFile(w http.ResponseWriter, r *http.Request) {
+	if !sv.uploadEnabled() {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprintf(w, "Upload is not allowed\n")
+		return
+	}
+
+	// Add some limitations for upload so it not so easy to abuse it.
+	if !sv.upload.CAS(false, true) {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprintf(w, "Only one upload allowed simultaneously\n")
+		return
+	}
+	defer func() { sv.upload.CAS(true, false) }()
+
+	if time.Now().Sub(sv.lastUpload) < 1*time.Minute {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprintf(w, "Only one upload allowed per minute\n")
+		return
+	}
+	sv.lastUpload = time.Now()
+
+	// Limit upload size of one file by 32 megabytes.
+	r.Body = http.MaxBytesReader(w, r.Body, sv.uploadFileLimit())
+	// FormFile returns the first file for the given key `file`
+	// it also returns the FileHeader so we can get the Filename, the Header and the Size of the file.
+	file, handler, err := r.FormFile("file")
+	if err != nil {
+		log.Debug().Err(multierror.Prefix(err, "httpSv.uploadFile:")).Str("ctx", "httpSv").Msg("")
+		return
+	}
+	defer file.Close()
+
+	fileName := strings.ToLower(handler.Filename)
+	if filepath.Ext(fileName) != ".mvd" {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprintf(w, "Invalid upload file extension, only mvd files supported\n")
+		return
+	}
+
+	fileName = sanitizeUploadFileName(fileName)
+
+	// Read all of the contents of our uploaded file into a byte array. FIXME: bad idea since it use a lot of RAM, better use io.Copy().
+	fileBytes, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Debug().Err(multierror.Prefix(err, "httpSv.uploadFile:")).Str("ctx", "httpSv").Msg("")
+		return
+	}
+
+	// Minor validation if it really a MVD file.
+	validationLen := ix.Min(len(fileBytes), 1024*100)
+	if _, ms := consistantMVD(fileBytes[:validationLen], false); ms < 500 {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprintf(w, "Invalid upload file, only mvd files supported\n")
+		return
+	}
+
+	// Create a temporary file within our demo directory that follows a particular naming pattern.
+	tempFile, err := ioutil.TempFile(sv.qtv.demoDir(), "upload-*-"+fileName+".mvd")
+	if err != nil {
+		log.Debug().Err(multierror.Prefix(err, "httpSv.uploadFile:")).Str("ctx", "httpSv").Msg("")
+		return
+	}
+	defer tempFile.Close()
+
+	// Write this byte array to our temporary file.
+	if _, err := tempFile.Write(fileBytes); err != nil {
+		log.Debug().Err(multierror.Prefix(err, "httpSv.uploadFile:")).Str("ctx", "httpSv").Msg("")
+		os.Remove(tempFile.Name())
+		return
+	}
+	// Return that we have successfully uploaded our file.
+	log.Trace().Str("ctx", "httpSv").Str("event", "uploadFile").Str("file", tempFile.Name()).Int64("size", handler.Size).Msg("")
+	fmt.Fprintf(w, "Successfully uploaded file as %v\n", tempFile.Name())
+}
+
 func (sv *httpSv) demosHandler(w http.ResponseWriter, r *http.Request) {
 	data := demosTemplateData{
 		mainTemplateData: sv.getMainTemplateData(r, "Demos"),
@@ -385,12 +506,13 @@ func (sv *httpSv) serve(l net.Listener) (err error) {
 
 	r.HandleFunc("/nowplaying/", sv.nowPlayingHandler)
 	r.HandleFunc("/demolist/", sv.demosHandler)
+	r.HandleFunc("/upload/", sv.uploadFile)
 
 	// File server for demo dir.
 	demosFileSys := fileHidingFileSystem{http.Dir(sv.qtv.demoDir())}
 	r.PathPrefix("/demos/").Handler(http.StripPrefix("/demos/", http.FileServer(demosFileSys)))
 
-	// File serer for qtv dir.
+	// File server for qtv dir.
 	// Would be better to have such files inside qtv/httproot but for backward compatibility we host whole qtv directory.
 	// We hide .cfg and .dot files though.
 	qtvFileSys := fileHidingFileSystem{http.Dir("qtv")}

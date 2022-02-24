@@ -3,6 +3,7 @@
 ## Features
 
 * All features from original QTV, except for RSS and admin HTTP page
+* Demo upload via HTTP interface
 * Better code base, should be easier for others to contribute and support
 * Build-in HTTP server from golang (faster, support HTTPS and HTTP/2, easier to extend)
 * IPv6 support, configurable

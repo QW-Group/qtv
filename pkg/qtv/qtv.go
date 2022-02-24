@@ -254,6 +254,10 @@ func (qtv *QTV) demoListUpdater() (err error) {
 				// Don't be fatal.
 				log.Err(multierror.Prefix(err, "QTV.demoListUpdater:")).Msg("")
 			}
+
+			// Check if we should remove some upload files.
+			qtv.uploadCleanUp()
+
 			t.Reset(60 * time.Second)
 		}
 	}
@@ -322,6 +326,32 @@ func (qtv *QTV) setDemoList(demoList demoList) {
 
 func (qtv *QTV) getDemoList() demoList {
 	return qtv.demoList.Load().(demoList)
+}
+
+func (qtv *QTV) uploadCleanUp() {
+	uploadMaxSize := qtv.httpSv.uploadTotalLimit()
+
+	var uploadSize int64
+
+	demos := qtv.getDemoList()
+
+	// Calculate how much space occupied by uploads.
+	for _, d := range demos {
+		if strings.HasPrefix(d.Name(), "upload") {
+			uploadSize += d.Size()
+		}
+	}
+
+	// Attempt to remove oldest uploads in order to clean up space.
+	for i := len(demos) - 1; i >= 0 && uploadSize > uploadMaxSize; i-- {
+		d := demos[i]
+		if strings.HasPrefix(d.Name(), "upload") {
+			file := filepath.Join(qtv.demoDir(), d.Name())
+			os.Remove(file)
+			uploadSize -= d.Size()
+			log.Trace().Str("ctx", "QTV").Str("event", "uploadCleanUp").Str("file", d.Name()).Int64("size", d.Size()).Int64("uploadSize", uploadSize).Msg("")
+		}
+	}
 }
 
 // Get ticker object for main loop.
@@ -399,6 +429,9 @@ func statusCmd(qtv *QTV, cmdArgs *qCmdArgs) error {
 	fmt.Printf("   hostname: %v\n", qtv.hostName())
 	fmt.Printf("listen addr: %v\n", qtv.listenAddress())
 	fmt.Printf("       http: %v\n", isEnabledFromBool(qtv.httpSv.isEnabled()))
+	if qtv.httpSv.isEnabled() {
+		fmt.Printf("http upload: %v\n", isEnabledFromBool(qtv.httpSv.uploadEnabled()))
+	}
 	return nil
 }
 
