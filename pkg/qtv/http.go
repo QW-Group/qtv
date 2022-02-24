@@ -139,7 +139,7 @@ func (sv *httpSv) prepare() (err error) {
 	</head>
 	<body>
 		<div id="navigation">
-			<span><a href="/nowplaying/">Live</a></span><span><a href="/demolist/">Demos</a></span><span><span><a href="{{.HelpURL}}" target="_blank">Help</a></span>
+			<span><a href="/nowplaying/">Live</a></span><span><a href="/demolist/">Demos</a></span><span><a href="{{.HelpURL}}" target="_blank">Help</a></span>
 		</div>
 		{{block "qtvBody" .}}{{end}}
 		<p id='version'><strong><a href="{{.ProjectURL}}">QTVGO</a> {{.Version}}, build {{.Build}}</strong></p>
