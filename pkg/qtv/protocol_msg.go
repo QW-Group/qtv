@@ -105,7 +105,7 @@ func (msg *netMsgR) GetCoord() float32 {
 	if msg.floatCoord {
 		return msg.GetFloat32()
 	}
-	return float32(msg.GetUint16()) / 8
+	return float32(msg.GetInt16()) / 8
 }
 
 func (msg *netMsgR) GetFloat32() float32 {
