@@ -518,6 +518,10 @@ func (us *uStream) sendInitialMVDData_1_0(ds *dStream) (err error) {
 			return err
 		}
 	}
+	// Workaround for ezQuake, otherwise we have invalid coordinates and model index for players.
+	if err := us.qp.sendPlaybackDelay(ds, 5); err != nil {
+		return err
+	}
 
 	return ds.setState(dsActive)
 }

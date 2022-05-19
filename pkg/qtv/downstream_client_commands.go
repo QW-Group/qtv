@@ -164,14 +164,14 @@ const (
 )
 
 // Wrap data inside MVD message and write it to dStream.
-func (ds *dStream) sendMVDMessageEx(msg *netMsgW, msgType mvdMsgType, playersMask uint32, checkAvail int) (err error) {
+func (ds *dStream) sendMVDMessageEx(msg *netMsgW, msgType mvdMsgType, playersMask uint32, checkAvail int, msgTime byte) (err error) {
 	defer func() { err = multierror.Prefix(err, "dStream.sendMVDMessageEx:") }()
 
 	us := ds.linkedUs
 
 	mvdHdr := us.mvdHdr.Clear()
 
-	mvdHdr.PutByte(0)
+	mvdHdr.PutByte(msgTime)
 	mvdHdr.PutByte(byte(msgType))
 	mvdHdr.PutUint32(uint32(msg.WPos()))
 
@@ -197,7 +197,7 @@ func (ds *dStream) sendMVDMessageEx(msg *netMsgW, msgType mvdMsgType, playersMas
 // Wrap data inside MVD message and write it to dStream.
 func (ds *dStream) sendMVDMessage(msg *netMsgW, msgType mvdMsgType, playersMask uint32) (err error) {
 	defer func() { err = multierror.Prefix(err, "dStream.sendMVDMessage:") }()
-	return ds.sendMVDMessageEx(msg, msgType, playersMask, 0)
+	return ds.sendMVDMessageEx(msg, msgType, playersMask, 0, 0)
 }
 
 // Some client commands should be accessible without /cmd prefix at client console, f.e. /follow.
@@ -317,6 +317,10 @@ func (ds *dStream) spawnClientCmd(tr *tokenizerResult) (err error) {
 		if err := us.qp.sendPause(ds); err != nil {
 			return err
 		}
+	}
+	// Workaround for ezQuake, otherwise we have invalid coordinates and model index for players.
+	if err := us.qp.sendPlaybackDelay(ds, 5); err != nil {
+		return err
 	}
 
 	return ds.setState(dsActive)
@@ -704,7 +708,7 @@ func (ds *dStream) sayClientCmd(tr *tokenizerResult) (err error) {
 
 	us.assertMutexIsLocked()
 	for _, d := range us.linkedDs {
-		if err := d.sendMVDMessageEx(msg, mvdMsgAll, playersMaskAll, defaultCheckAvail); err != nil {
+		if err := d.sendMVDMessageEx(msg, mvdMsgAll, playersMaskAll, defaultCheckAvail, 0); err != nil {
 			if errors.Is(err, errCheckAvail) {
 				log.Trace().Err(multierror.Prefix(err, "dStream.sayClientCmd:")).Msg("")
 				continue // Ignore error, keep downstream alive.
@@ -891,7 +895,7 @@ func (ds *dStream) userListUpdateBroadCast(action qtvUserListAction) (err error)
 		if (d.qtvEzQuakeExt & qtvEzQuakeExtQtvUserList) == 0 {
 			continue
 		}
-		if err := d.sendMVDMessageEx(msg, mvdMsgRead, playersMaskAll, defaultCheckAvail); err != nil {
+		if err := d.sendMVDMessageEx(msg, mvdMsgRead, playersMaskAll, defaultCheckAvail, 0); err != nil {
 			if errors.Is(err, errCheckAvail) {
 				log.Trace().Err(multierror.Prefix(err, "dStream.userListUpdateBroadCast:")).Msg("")
 				continue // Ignore error, keep downstream alive.
@@ -925,7 +929,7 @@ func (ds *dStream) sendInitialUserList() (err error) {
 		if msg.WPos() == 0 {
 			continue
 		}
-		if err := ds.sendMVDMessageEx(msg, mvdMsgRead, playersMaskAll, defaultCheckAvail); err != nil {
+		if err := ds.sendMVDMessageEx(msg, mvdMsgRead, playersMaskAll, defaultCheckAvail, 0); err != nil {
 			if errors.Is(err, errCheckAvail) {
 				log.Trace().Err(multierror.Prefix(err, "dStream.sendInitialUserList:")).Msg("")
 				return nil // Ignore error, keep downstream alive.

@@ -371,6 +371,12 @@ func (qp *qProtocol) sendPause(ds *dStream) error {
 	return ds.sendMVDMessage(msg, mvdMsgRead, playersMaskAll)
 }
 
+func (qp *qProtocol) sendPlaybackDelay(ds *dStream, delay byte) error {
+	msg := qp.w.Clear()
+
+	return ds.sendMVDMessageEx(msg, mvdMsgAll, playersMaskAll, 0, delay)
+}
+
 func (qp *qProtocol) putStuffTextf(msg *netMsgW, format string, a ...interface{}) {
 	if format == "" {
 		return
