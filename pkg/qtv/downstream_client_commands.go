@@ -245,7 +245,7 @@ func (ds *dStream) soundListClientCmd(tr *tokenizerResult) (err error) {
 		return ds.setState(dsNeedInitialData)
 	}
 
-	if err := us.qp.sendList(ds, us.qp.soundList[:], svc_soundlist); err != nil {
+	if err := us.qp.sendList(ds, us.qp.soundList[:], svc_soundlist, svc_fte_soundlistshort_UNUSED); err != nil {
 		return err
 	}
 
@@ -271,7 +271,7 @@ func (ds *dStream) modelListClientCmd(tr *tokenizerResult) (err error) {
 		return ds.setState(dsNeedInitialData)
 	}
 
-	if err := us.qp.sendList(ds, us.qp.modelList[:], svc_modellist); err != nil {
+	if err := us.qp.sendList(ds, us.qp.modelList[:], svc_modellist, svc_fte_modellistshort); err != nil {
 		return err
 	}
 

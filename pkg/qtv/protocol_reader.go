@@ -261,7 +261,7 @@ func (qp *qProtocol) readCenterPrint() error {
 
 // For baselines/static entities.
 func (qp *qProtocol) readEntityState(es *entityState) {
-	es.modelIndex = qp.r.GetByte()
+	es.modelIndex = uint16(qp.r.GetByte())
 	es.frame = qp.r.GetByte()
 	es.colorMap = qp.r.GetByte()
 	es.skinNum = qp.r.GetByte()
@@ -276,11 +276,11 @@ func (qp *qProtocol) readBaseLine(delta bool) error {
 		if (qp.extFlagsFTE1 & ftePextSpawnStatic2) == 0 {
 			return errors.New("readBaseLine: (delta) ftePextSpawnStatic2 flag is not set")
 		}
-		entNum, flags := qp.readEntityNum()
+		entNum, flags, moreflags := qp.readEntityNum()
 		if entNum >= maxEntities {
 			return errors.New("readBaseline: (delta) maxEntities")
 		}
-		qp.readEntityDelta(&nullEntityState, &qp.baseLine[entNum], flags, false)
+		qp.readEntityDelta(&nullEntityState, &qp.baseLine[entNum], flags, moreflags, false)
 	} else {
 		entNum := qp.r.GetUint16()
 		if entNum >= maxEntities {
@@ -326,8 +326,8 @@ func (qp *qProtocol) readSpawnStatic(delta bool) error {
 	}
 
 	if delta {
-		_, flags := qp.readEntityNum()
-		qp.readEntityDelta(&nullEntityState, &qp.spawnStatic[qp.spawnStaticCount], flags, false)
+		_, flags, moreflags := qp.readEntityNum()
+		qp.readEntityDelta(&nullEntityState, &qp.spawnStatic[qp.spawnStaticCount], flags, moreflags, false)
 	} else {
 		qp.readEntityState(&qp.spawnStatic[qp.spawnStaticCount])
 	}
@@ -376,11 +376,11 @@ func (qp *qProtocol) readPlayerInfo() error {
 	return nil
 }
 
-func (qp *qProtocol) readEntityNum() (entNum uint, flags uint) {
+func (qp *qProtocol) readEntityNum() (entNum uint, flags uint, moreflags uint) {
 	flags = uint(qp.r.GetUint16())
 
 	if flags == 0 {
-		return 0, 0
+		return 0, 0, 0
 	}
 
 	entNum = flags & 511
@@ -388,17 +388,36 @@ func (qp *qProtocol) readEntityNum() (entNum uint, flags uint) {
 
 	if (flags & uMoreBits) != 0 {
 		flags |= uint(qp.r.GetByte())
+		if (flags & uFteEvenMore) != 0 {
+			moreflags |= uint(qp.r.GetByte())
+			if (moreflags & uFteEvenMore) != 0 {
+				moreflags |= uint(qp.r.GetByte()) << 8
+			}
+
+			if (moreflags & uFteEntityDbl) != 0 {
+				entNum += 512
+			}
+			if (moreflags & uFteEntityDbl2) != 0 {
+				entNum += 1024
+			}
+		}
 	}
 
-	return entNum, flags
+	return entNum, flags, moreflags
 }
 
-func (qp *qProtocol) readEntityDelta(old *entityState, new *entityState, flags uint, forcereLink bool) {
+func (qp *qProtocol) readEntityDelta(old *entityState, new *entityState, flags uint, moreflags uint, forcereLink bool) {
 	*new = *old
 
 	if (flags & uModel) != 0 {
-		new.modelIndex = qp.r.GetByte()
+		new.modelIndex = uint16(qp.r.GetByte())
+		if (moreflags & uFteModelDbl) != 0 {
+			new.modelIndex += 256
+		}
+	} else if (moreflags & uFteModelDbl) != 0 {
+		new.modelIndex = qp.r.GetUint16()
 	}
+
 	if (flags & uFrame) != 0 {
 		new.frame = qp.r.GetByte()
 	}
@@ -430,6 +449,15 @@ func (qp *qProtocol) readEntityDelta(old *entityState, new *entityState, flags u
 	if (flags & uAngle3) != 0 {
 		new.angles[2] = qp.r.GetAngle()
 	}
+
+	if (moreflags & uFteTrans) != 0 {
+		new.trans = qp.r.GetByte()
+	}
+	if (moreflags & uFteColourMod) != 0 {
+		new.colourmod[0] = qp.r.GetByte()
+		new.colourmod[1] = qp.r.GetByte()
+		new.colourmod[2] = qp.r.GetByte()
+	}
 }
 
 func canExpandFrame(newMax int) bool {
@@ -450,7 +478,8 @@ func (qp *qProtocol) readPacketEntities(isDelta bool) error {
 	newindex := 0
 
 	for {
-		newnum, flags := qp.readEntityNum()
+		newnum, flags, moreflags := qp.readEntityNum()
+
 		if newnum == 0 {
 			// End of packet, any remaining old ents need to be copied to the new frame.
 			for oldindex < oldcount {
@@ -497,7 +526,7 @@ func (qp *qProtocol) readPacketEntities(isDelta bool) error {
 			if !canExpandFrame(newindex) {
 				break
 			}
-			qp.readEntityDelta(&qp.baseLine[newnum], &newframe.ents[newindex], flags, true)
+			qp.readEntityDelta(&qp.baseLine[newnum], &newframe.ents[newindex], flags, moreflags, true)
 			newframe.entNums[newindex] = uint16(newnum)
 			newindex++
 		} else if newnum == oldnum {
@@ -511,7 +540,7 @@ func (qp *qProtocol) readPacketEntities(isDelta bool) error {
 				break
 			}
 
-			qp.readEntityDelta(&oldframe.ents[oldindex], &newframe.ents[newindex], flags, false)
+			qp.readEntityDelta(&oldframe.ents[oldindex], &newframe.ents[newindex], flags, moreflags, false)
 			newframe.entNums[newindex] = uint16(newnum)
 			newindex++
 			oldindex++
@@ -837,8 +866,13 @@ func (qp *qProtocol) readMaxSpeed() error {
 	return nil
 }
 
-func (qp *qProtocol) readList(list []string) (byte, error) {
-	first := int(qp.r.GetByte()) + 1
+func (qp *qProtocol) readList(list []string, extended bool) (byte, error) {
+	var first int
+	if extended {
+		first = int(qp.r.GetUint16()) + 1
+	} else {
+		first = int(qp.r.GetByte()) + 1
+	}
 	for ; first < len(list); first++ {
 		list[first] = qp.r.GetString()
 		if list[first] == "" {
@@ -853,8 +887,8 @@ func (qp *qProtocol) readList(list []string) (byte, error) {
 	return qp.r.GetByte(), nil
 }
 
-func (qp *qProtocol) readModelList() error {
-	_, err := qp.readList(qp.modelList[:])
+func (qp *qProtocol) readModelList(extended bool) error {
+	_, err := qp.readList(qp.modelList[:], extended)
 	if err != nil {
 		return err
 	}
@@ -878,7 +912,7 @@ func (qp *qProtocol) fixEmptyMapName() {
 }
 
 func (qp *qProtocol) readSoundList() error {
-	_, err := qp.readList(qp.soundList[:])
+	_, err := qp.readList(qp.soundList[:], false)
 	return err
 }
 
@@ -981,7 +1015,9 @@ func (qp *qProtocol) readMessageForSvc() error {
 	case svc_chokecount:
 		return qp.readChokeCount()
 	case svc_modellist:
-		return qp.readModelList()
+		return qp.readModelList(false)
+	case svc_fte_modellistshort:
+		return qp.readModelList(true)
 	case svc_soundlist:
 		return qp.readSoundList()
 	case svc_packetentities:

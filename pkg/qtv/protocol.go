@@ -149,10 +149,12 @@ type entityState struct {
 	origin     [3]float32
 	angles     [3]float32
 	frame      byte
-	modelIndex byte
+	modelIndex uint16
 	colorMap   byte
 	skinNum    byte
 	effects    byte
+	trans      byte
+	colourmod  [3]byte
 }
 
 type staticSound struct {
@@ -171,12 +173,14 @@ const (
 const (
 	maxClients            = 32
 	maxList               = 256
-	maxModels             = maxList
+	maxModels             = maxEntities + maxStaticEntities // Could be max uint16, but stay with static + baseline entity limit
 	maxSounds             = maxList
 	maxEntityFrames       = 64
 	maxDemoPacketEntities = 300
-	maxEntities           = 512
-	maxStaticEntities     = 512
+	extraEntitiesDouble   = 512
+	extraEntitiesDouble2  = 1024
+	maxEntities           = 512 + extraEntitiesDouble + extraEntitiesDouble2
+	maxStaticEntities     = 512 + extraEntitiesDouble + extraEntitiesDouble2 // Artificial limit matching mvdsv
 	maxLightStyles        = 64
 	maxStaticSounds       = 512
 	maxStats              = 32
@@ -195,7 +199,12 @@ const (
 )
 
 const (
+	ftePextTrans        uint32 = 0x00000008 // Extra 8 bit with alpha in delta if changed
+	ftePextModelDbl     uint32 = 0x00001000 // Up to uint16 model indices
+	ftePextEntityDbl    uint32 = 0x00002000 // Up to 1024 entity indices
+	ftePextEntityDbl2   uint32 = 0x00004000 // Up to 2048 entity indices
 	ftePextFloatCoords  uint32 = 0x00008000
+	ftePextColourmod    uint32 = 0x00080000 // Extra 24 bit color in delta if changed
 	ftePextSpawnStatic2 uint32 = 0x00400000 // Sends an entity delta instead of a baseline (or spawnstatic). Obsoleted by PEXT2_REPLACEMENTDELTAS.
 )
 
@@ -222,13 +231,28 @@ const (
 
 // If uMoreBits is set, these additional flags are read in next.
 const (
-	uAngle1   = (1 << 0)
-	uAngle3   = (1 << 1)
-	uModel    = (1 << 2)
-	uColorMap = (1 << 3)
-	uSkin     = (1 << 4)
-	uEffects  = (1 << 5)
-	uSolid    = (1 << 6)
+	uAngle1      = (1 << 0)
+	uAngle3      = (1 << 1)
+	uModel       = (1 << 2)
+	uColorMap    = (1 << 3)
+	uSkin        = (1 << 4)
+	uEffects     = (1 << 5)
+	uSolid       = (1 << 6)
+	uFteEvenMore = (1 << 7)
+)
+
+// If uFteEvenMore is set, there might be even more.
+const (
+	uFteTrans      = (1 << 1)
+	uFteModelDbl   = (1 << 3)
+	uFteEntityDbl  = (1 << 5)
+	uFteEntityDbl2 = (1 << 6)
+	uFteYetMore    = (1 << 7)
+)
+
+// If uFteYetMore is set, there might be yet more.
+const (
+	uFteColourMod = (1 << 10)
 )
 
 // svc_print messages have an id, so messages can be filtered.
@@ -300,11 +324,11 @@ const (
 	svc_updatepl
 	svc_nails2
 	svc_unused_55
-	svc_unused_56
+	svc_fte_soundlistshort_UNUSED
 	svc_unused_57
 	svc_unused_58
 	svc_unused_59
-	svc_unused_60
+	svc_fte_modellistshort
 	svc_unused_61
 	svc_unused_62
 	svc_unused_63
