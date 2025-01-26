@@ -1,10 +1,8 @@
 package qtv
 
-//
 // QW protocol writer (serializer).
 // Functions with 'put' prefix puts data inside msg.
 // Functions with 'send' prefix sends data to dStream.
-//
 
 func (qp *qProtocol) sendServerData(ds *dStream) error {
 	msg := qp.w.Clear()
@@ -46,9 +44,14 @@ func (qp *qProtocol) sendServerData(ds *dStream) error {
 	return ds.sendMVDMessage(msg, mvdMsgRead, playersMaskAll)
 }
 
-func (qp *qProtocol) putList(msg *netMsgW, first int, list []string, svc protocolSvc) (i int) {
-	msg.PutSVC(svc)
-	msg.PutByte(byte(first))
+func (qp *qProtocol) putList(msg *netMsgW, first int, list []string, svc protocolSvc, svcExtended protocolSvc) (i int) {
+	if first > 0xff {
+		msg.PutSVC(svcExtended)
+		msg.PutUint16(uint16(first))
+	} else {
+		msg.PutSVC(svc)
+		msg.PutByte(byte(first))
+	}
 
 	for i = first + 1; i < len(list); i++ {
 		msg.PutString(list[i])
@@ -57,8 +60,8 @@ func (qp *qProtocol) putList(msg *netMsgW, first int, list []string, svc protoco
 			return -1 // No more.
 		}
 
-		if msg.wPos > 768 {
-			// Truncate.
+		if msg.wPos > maxMsgSize/2 && ((i-1)&0xff) != 0 {
+			// Truncate as long as count does not become zero
 			i--
 			break
 		}
@@ -70,10 +73,10 @@ func (qp *qProtocol) putList(msg *netMsgW, first int, list []string, svc protoco
 	return i
 }
 
-func (qp *qProtocol) sendList(ds *dStream, list []string, svc protocolSvc) error {
+func (qp *qProtocol) sendList(ds *dStream, list []string, svc protocolSvc, svcExtended protocolSvc) error {
 	for prespawn := 0; prespawn >= 0; {
 		msg := qp.w.Clear()
-		prespawn = qp.putList(msg, prespawn, list, svc)
+		prespawn = qp.putList(msg, prespawn, list, svc, svcExtended)
 		if err := ds.sendMVDMessage(msg, mvdMsgRead, playersMaskAll); err != nil {
 			return err
 		}
@@ -118,7 +121,7 @@ func (qp *qProtocol) putUserInfos(msg *netMsgW, cursize int, maxbuffersize int, 
 }
 
 func (qp *qProtocol) putEntityState(msg *netMsgW, es *entityState) {
-	msg.PutByte(es.modelIndex)
+	msg.PutByte(byte(es.modelIndex & 0xff))
 	msg.PutByte(es.frame)
 	msg.PutByte(es.colorMap)
 	msg.PutByte(es.skinNum)
@@ -139,9 +142,14 @@ func (qp *qProtocol) putBaseLines(msg *netMsgW, cursize int, maxbuffersize int, 
 		}
 
 		if qp.baseLine[i].modelIndex != 0 {
-			msg.PutSVC(svc_spawnbaseline)
-			msg.PutUint16(uint16(i))
-			qp.putEntityState(msg, &qp.baseLine[i])
+			if (qp.extFlagsFTE1 & ftePextSpawnStatic2) != 0 {
+				msg.PutSVC(svc_fte_spawnbaseline2)
+				qp.putDelta(msg, i, &nullEntityState, &qp.baseLine[i], true)
+			} else {
+				msg.PutSVC(svc_spawnbaseline)
+				msg.PutUint16(uint16(i))
+				qp.putEntityState(msg, &qp.baseLine[i])
+			}
 		}
 	}
 
@@ -202,8 +210,13 @@ func (qp *qProtocol) putStaticEntities(msg *netMsgW, cursize int, maxbuffersize 
 			continue
 		}
 
-		msg.PutSVC(svc_spawnstatic)
-		qp.putEntityState(msg, &qp.spawnStatic[i])
+		if (qp.extFlagsFTE1 & ftePextSpawnStatic2) != 0 {
+			msg.PutSVC(svc_fte_spawnstatic2)
+			qp.putDelta(msg, i, &nullEntityState, &qp.spawnStatic[i], true)
+		} else {
+			msg.PutSVC(svc_spawnstatic)
+			qp.putEntityState(msg, &qp.spawnStatic[i])
+		}
 	}
 
 	return i
@@ -258,6 +271,20 @@ func (qp *qProtocol) sendPreSpawn(ds *dStream) error {
 
 func (qp *qProtocol) putDelta(msg *netMsgW, entnum int, from *entityState, to *entityState, force bool) {
 	bits := 0
+
+	evenMoreBits := 0
+
+	if from.modelIndex != to.modelIndex {
+		bits |= uModel
+		if (qp.extFlagsFTE1 & ftePextModelDbl) != 0 {
+			if to.modelIndex > 255 {
+				if to.modelIndex > 512 {
+					bits &= ^uModel
+				}
+				evenMoreBits |= uFteModelDbl
+			}
+		}
+	}
 	if from.angles[0] != to.angles[0] {
 		bits |= uAngle1
 	}
@@ -284,9 +311,6 @@ func (qp *qProtocol) putDelta(msg *netMsgW, entnum int, from *entityState, to *e
 	if from.skinNum != to.skinNum {
 		bits |= uSkin
 	}
-	if from.modelIndex != to.modelIndex {
-		bits |= uModel
-	}
 	if from.frame != to.frame {
 		bits |= uFrame
 	}
@@ -294,6 +318,35 @@ func (qp *qProtocol) putDelta(msg *netMsgW, entnum int, from *entityState, to *e
 		bits |= uEffects
 	}
 
+	if (qp.extFlagsFTE1 & ftePextTrans) != 0 {
+		if to.trans != from.trans {
+			evenMoreBits |= uFteTrans
+		}
+	}
+	if (qp.extFlagsFTE1 & ftePextColourmod) != 0 {
+		if to.colourmod[0] != from.colourmod[0] || to.colourmod[1] != from.colourmod[1] || to.colourmod[2] != from.colourmod[2] {
+			evenMoreBits |= uFteColourMod
+		}
+	}
+	if (qp.extFlagsFTE1&ftePextEntityDbl) != 0 && (qp.extFlagsFTE1&ftePextEntityDbl2) != 0 {
+		if entnum >= 512 {
+			if entnum >= 1024 {
+				if entnum >= (1024 + 512) {
+					evenMoreBits |= uFteEntityDbl
+				}
+				evenMoreBits |= uFteEntityDbl2
+			} else {
+				evenMoreBits |= uFteEntityDbl
+			}
+		}
+	}
+
+	if (evenMoreBits & 0xff00) != 0 {
+		evenMoreBits |= uFteYetMore
+	}
+	if (evenMoreBits & 0x00ff) != 0 {
+		bits |= uFteEvenMore
+	}
 	if (bits & 255) != 0 {
 		bits |= uMoreBits
 	}
@@ -308,8 +361,17 @@ func (qp *qProtocol) putDelta(msg *netMsgW, entnum int, from *entityState, to *e
 	if (bits & uMoreBits) != 0 {
 		msg.PutByte(byte(bits & 255))
 	}
+	if (bits & uFteEvenMore) != 0 {
+		msg.PutByte(byte(evenMoreBits & 255))
+	}
+	if (evenMoreBits & uFteYetMore) != 0 {
+		msg.PutByte(byte((evenMoreBits >> 8) & 255))
+	}
+
 	if (bits & uModel) != 0 {
-		msg.PutByte(to.modelIndex)
+		msg.PutByte(byte(to.modelIndex & 0xff))
+	} else if (evenMoreBits & uFteModelDbl) != 0 {
+		msg.PutUint16(to.modelIndex)
 	}
 	if (bits & uFrame) != 0 {
 		msg.PutByte(to.frame)
@@ -340,6 +402,15 @@ func (qp *qProtocol) putDelta(msg *netMsgW, entnum int, from *entityState, to *e
 	}
 	if (bits & uAngle3) != 0 {
 		msg.PutAngle(to.angles[2])
+	}
+
+	if (evenMoreBits & uFteTrans) != 0 {
+		msg.PutByte(to.trans)
+	}
+	if (evenMoreBits & uFteColourMod) != 0 {
+		msg.PutByte(to.colourmod[0])
+		msg.PutByte(to.colourmod[1])
+		msg.PutByte(to.colourmod[2])
 	}
 }
 
