@@ -12,7 +12,7 @@ import (
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/markphelps/optional"
-	"github.com/qqshka/qtv-go/pkg/pools"
+	"github.com/qw-group/qtv-go/pkg/pools"
 	"github.com/rs/zerolog/log"
 )
 

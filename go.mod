@@ -1,4 +1,4 @@
-module github.com/qqshka/qtv-go
+module github.com/qw-group/qtv-go
 
 go 1.19
 
