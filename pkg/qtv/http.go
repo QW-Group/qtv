@@ -422,6 +422,17 @@ func (sv *httpSv) demosHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (sv *httpSv) demosHandlerCompat(w http.ResponseWriter, r *http.Request) {
+	demoList := sv.qtv.getDemoList()
+
+	for _, demo := range demoList {
+		if _, err := fmt.Fprintf(w, "%s\n", demo.Name()); err != nil {
+			log.Debug().Err(multierror.Prefix(err, "httpSv.demosHandlerCompat: failed to write demolist")).Str("ctx", "httpSv").Str("filename", demo.Name()).Msg("")
+			break
+		}
+	}
+}
+
 func (sv *httpSv) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 	data := nowPlayingTemplateData{
 		mainTemplateData: sv.getMainTemplateData(r, "Now Playing"),
@@ -507,6 +518,9 @@ func (sv *httpSv) serve(l net.Listener) (err error) {
 	r.HandleFunc("/nowplaying/", sv.nowPlayingHandler)
 	r.HandleFunc("/demolist/", sv.demosHandler)
 	r.HandleFunc("/upload/", sv.uploadFile)
+
+	// Compat with original QTV
+	r.HandleFunc("/demo_filenames", sv.demosHandlerCompat)
 
 	// File server for demo dir.
 	demosFileSys := fileHidingFileSystem{http.Dir(sv.qtv.demoDir())}
