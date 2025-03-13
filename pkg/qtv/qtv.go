@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-multierror"
-	"github.com/qqshka/qtv-go/pkg/info"
-	"github.com/qqshka/qtv-go/pkg/qfs"
+	"github.com/qw-group/qtv-go/pkg/info"
+	"github.com/qw-group/qtv-go/pkg/qfs"
 	"github.com/rs/zerolog/log"
 	"github.com/soheilhy/cmux"
 	"go.uber.org/atomic"
@@ -28,7 +28,7 @@ const (
 	qtvVersion    = 1.0   // We support up to this QTV version.
 	qtvRelease    = "1.1" // Release version.
 	qtvBuild      = "0"
-	qtvProjectURL = "https://github.com/qqshka/qtv-go"
+	qtvProjectURL = "https://github.com/qw-group/qtv-go"
 	qtvHelpURL    = qtvProjectURL
 	qtvMaxClients = 2048
 )
