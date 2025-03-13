@@ -309,6 +309,9 @@ func (qtv *QTV) updateDemoList() error {
 		if !demoNameHasValidExtension(name) {
 			continue // Unknown extension.
 		}
+		if info.Size() == 0 {
+			continue // Empty file.
+		}
 		demoList = append(demoList, info)
 	}
 
