@@ -10,7 +10,7 @@ import (
 	"github.com/adam-lavrik/go-imath/ix"
 	"github.com/hashicorp/go-multierror"
 	"github.com/markphelps/optional"
-	"github.com/qqshka/qtv-go/pkg/qfs"
+	"github.com/qw-group/qtv-go/pkg/qfs"
 	"github.com/rs/zerolog/log"
 )
 

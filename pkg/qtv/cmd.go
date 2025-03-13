@@ -13,7 +13,7 @@ import (
 	"unicode"
 
 	"github.com/hashicorp/go-multierror"
-	"github.com/qqshka/qtv-go/pkg/qfs"
+	"github.com/qw-group/qtv-go/pkg/qfs"
 	"github.com/rs/zerolog/log"
 )
 

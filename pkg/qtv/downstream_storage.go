@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-multierror"
-	"github.com/qqshka/qtv-go/pkg/pools"
+	"github.com/qw-group/qtv-go/pkg/pools"
 	"github.com/rs/zerolog/log"
 )
 
