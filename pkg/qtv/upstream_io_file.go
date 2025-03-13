@@ -3,6 +3,7 @@ package qtv
 import (
 	"context"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -43,6 +44,11 @@ func (ust *uStreamFile) Open(ctx context.Context) (err error) {
 	ust.Close()
 
 	addr, err := addressFromServerStr("file:", ust.server)
+	if err != nil {
+		return err
+	}
+
+	addr, err = url.QueryUnescape(addr)
 	if err != nil {
 		return err
 	}
