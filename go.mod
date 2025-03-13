@@ -18,17 +18,17 @@ require (
 
 require (
 	github.com/hashicorp/go-multierror v1.1.1
-	golang.org/x/net v0.5.0 // indirect
-	golang.org/x/text v0.6.0 // indirect
+	golang.org/x/net v0.36.0 // indirect
+	golang.org/x/text v0.22.0 // indirect
 )
 
 require (
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/markphelps/optional v0.10.0
-	golang.org/x/crypto v0.5.0
+	golang.org/x/crypto v0.35.0
 )
 
 require (
 	github.com/rs/zerolog v1.28.0
-	golang.org/x/sys v0.4.0 // indirect
+	golang.org/x/sys v0.30.0 // indirect
 )
