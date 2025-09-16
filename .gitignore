@@ -8,6 +8,8 @@
 /qtv-go
 /build
 
+demos/
+
 # Test binary, built with `go test -c`
 *.test
 
