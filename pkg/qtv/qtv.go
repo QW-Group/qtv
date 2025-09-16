@@ -326,7 +326,7 @@ func (qtv *QTV) updateDemoList() error {
 		demoPath := filepath.Join(demoDir, info.Name())
 		hashXXH3, err := XXH3Sum(demoPath)
 		if err != nil {
-			log.Trace().Str("ctx", "QTV").Str("event", "updateDemoList").Str("file", info.Name()).Int64("size", info.Size()).Msg("")
+			log.Trace().Str("ctx", "QTV").Str("event", "updateDemoList").Str("file", info.Name()).Int64("size", info.Size()).Msg("XXH3Sum")
 			continue
 		}
 
