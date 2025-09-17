@@ -197,13 +197,13 @@ func (sv *httpSv) prepare() (err error) {
 		{{range $i, $e := .List}}
 		<tr class="{{isEven $i}}">
 			<td class="stream">
-				{{if hasSuffix .Name ".mvd"}}
-					<a href="qw://file:{{.Name}}@{{$.Address}}/qtvplay"><img src="/stream.png" width="14" height="15" /></a>
+				{{if hasSuffix .FileInfo.Name ".mvd"}}
+					<a href="qw://file:{{.FileInfo.Name}}@{{$.Address}}/qtvplay"><img src="/stream.png" width="14" height="15" /></a>
 				{{end}}
 			</td>
-			<td class="save"><a href="/demos/{{.Name}}"><img src="/save.png" width="16" height="16" /></a></td>
-			<td class="name">{{.Name}}</td>
-			<td class="size">{{toKb .Size}} kB</td>
+			<td class="save"><a href="/demos/{{.FileInfo.Name}}"><img src="/save.png" width="16" height="16" /></a></td>
+			<td class="name">{{.FileInfo.Name}}</td>
+			<td class="size">{{toKb .FileInfo.Size}} kB</td>
 		</tr>
 		{{end}}
 	</tbody>
@@ -424,10 +424,24 @@ func (sv *httpSv) demosHandler(w http.ResponseWriter, r *http.Request) {
 
 func (sv *httpSv) demosHandlerCompat(w http.ResponseWriter, r *http.Request) {
 	demoList := sv.qtv.getDemoList()
+	hashFunction := r.URL.Query().Get("hash")
 
 	for _, demo := range demoList {
-		if _, err := fmt.Fprintf(w, "%s\n", demo.Name()); err != nil {
-			log.Debug().Err(multierror.Prefix(err, "httpSv.demosHandlerCompat: failed to write demolist")).Str("ctx", "httpSv").Str("filename", demo.Name()).Msg("")
+		var line string
+
+		switch hashFunction {
+		case "xxh3":
+			line = fmt.Sprintf("%s %s", demo.Hash.XXH3, demo.FileInfo.Name())
+		default:
+			line = demo.FileInfo.Name()
+		}
+
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			log.Debug().Err(multierror.Prefix(err, "httpSv.demosHandlerCompat: failed to write demolist")).
+				Str("ctx", "httpSv").
+				Str("filename", demo.FileInfo.Name()).
+				Str("hash", hashFunction).
+				Msg("")
 			break
 		}
 	}

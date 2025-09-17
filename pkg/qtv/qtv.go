@@ -25,7 +25,7 @@ import (
 //
 
 const (
-	qtvVersion    = 1.0   // We support up to this QTV version.
+	qtvVersion    = 1.0        // We support up to this QTV version.
 	qtvRelease    = "1.16-dev" // Release version.
 	qtvBuild      = "0"
 	qtvProjectURL = "https://github.com/qw-group/qtv-go"
@@ -92,7 +92,16 @@ func NewQTV(ctx context.Context, console <-chan string, arguments []string) (qtv
 	return qtv, nil
 }
 
-type demoList []os.FileInfo
+type demoList []DemoListItem
+
+type DemoListItem struct {
+	FileInfo os.FileInfo
+	Hash     Hashes
+}
+
+type Hashes struct {
+	XXH3 string
+}
 
 type qtvFlagSet struct {
 	flag.FlagSet
@@ -290,7 +299,8 @@ func demoNameHasValidExtension(name string) bool {
 }
 
 func (qtv *QTV) updateDemoList() error {
-	f, err := os.Open(qtv.demoDir())
+	demoDir := qtv.demoDir()
+	f, err := os.Open(demoDir)
 	if err != nil {
 		qtv.setDemoList(make(demoList, 0))
 		return err
@@ -312,10 +322,23 @@ func (qtv *QTV) updateDemoList() error {
 		if info.Size() == 0 {
 			continue // Empty file.
 		}
-		demoList = append(demoList, info)
+
+		demoPath := filepath.Join(demoDir, info.Name())
+		hashXXH3, err := XXH3Sum(demoPath)
+		if err != nil {
+			log.Trace().Str("ctx", "QTV").Str("event", "updateDemoList").Str("file", info.Name()).Int64("size", info.Size()).Msg("XXH3Sum")
+			continue
+		}
+
+		demoList = append(demoList, DemoListItem{
+			FileInfo: info,
+			Hash: Hashes{
+				XXH3: hashXXH3,
+			},
+		})
 	}
 
-	sort.Slice(demoList, func(i, j int) bool { return demoList[i].ModTime().After(demoList[j].ModTime()) })
+	sort.Slice(demoList, func(i, j int) bool { return demoList[i].FileInfo.ModTime().After(demoList[j].FileInfo.ModTime()) })
 	qtv.setDemoList(demoList)
 
 	return err
@@ -340,19 +363,19 @@ func (qtv *QTV) uploadCleanUp() {
 
 	// Calculate how much space occupied by uploads.
 	for _, d := range demos {
-		if strings.HasPrefix(d.Name(), "upload") {
-			uploadSize += d.Size()
+		if strings.HasPrefix(d.FileInfo.Name(), "upload") {
+			uploadSize += d.FileInfo.Size()
 		}
 	}
 
 	// Attempt to remove oldest uploads in order to clean up space.
 	for i := len(demos) - 1; i >= 0 && uploadSize > uploadMaxSize; i-- {
 		d := demos[i]
-		if strings.HasPrefix(d.Name(), "upload") {
-			file := filepath.Join(qtv.demoDir(), d.Name())
+		if strings.HasPrefix(d.FileInfo.Name(), "upload") {
+			file := filepath.Join(qtv.demoDir(), d.FileInfo.Name())
 			os.Remove(file)
-			uploadSize -= d.Size()
-			log.Trace().Str("ctx", "QTV").Str("event", "uploadCleanUp").Str("file", d.Name()).Int64("size", d.Size()).Int64("uploadSize", uploadSize).Msg("")
+			uploadSize -= d.FileInfo.Size()
+			log.Trace().Str("ctx", "QTV").Str("event", "uploadCleanUp").Str("file", d.FileInfo.Name()).Int64("size", d.FileInfo.Size()).Int64("uploadSize", uploadSize).Msg("")
 		}
 	}
 }

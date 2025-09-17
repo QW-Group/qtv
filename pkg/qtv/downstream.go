@@ -14,8 +14,8 @@ import (
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/markphelps/optional"
-	"github.com/qw-group/qtv-go/pkg/info"
 	"github.com/qqshka/ringbuffer"
+	"github.com/qw-group/qtv-go/pkg/info"
 	"github.com/rs/zerolog/log"
 	"go.uber.org/atomic"
 )

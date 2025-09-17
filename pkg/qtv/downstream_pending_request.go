@@ -271,8 +271,8 @@ func (ds *dStream) demoListRequest() (err error) {
 	// List could be huge and would overflow ring buffer so we use intermediate storage.
 	var b strings.Builder
 
-	for _, info := range demoList {
-		fmt.Fprintf(&b, "ADEMO: %v: %15s\n", info.Size(), info.Name())
+	for _, demo := range demoList {
+		fmt.Fprintf(&b, "ADEMO: %v: %15s\n", demo.FileInfo.Size(), demo.FileInfo.Name())
 	}
 
 	return ds.sendReplyWithBuilder(true, time.Now().Add(60*time.Second), &b)
