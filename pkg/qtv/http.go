@@ -8,6 +8,7 @@ import (
 	stdlog "log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -536,7 +537,7 @@ func (sv *httpSv) serve(l net.Listener) (err error) {
 	// Compat with original QTV
 	r.HandleFunc("/demo_filenames", sv.demosHandlerCompat)
 	r.HandleFunc("/dl/demos/{file:.*}", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/demos/"+mux.Vars(r)["file"], http.StatusMovedPermanently)
+		http.Redirect(w, r, "/demos/"+url.PathEscape(mux.Vars(r)["file"]), http.StatusMovedPermanently)
 	})
 
 	// File server for demo dir.
