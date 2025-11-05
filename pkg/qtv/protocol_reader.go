@@ -390,7 +390,7 @@ func (qp *qProtocol) readEntityNum() (entNum uint, flags uint, moreflags uint) {
 		flags |= uint(qp.r.GetByte())
 		if (flags & uFteEvenMore) != 0 {
 			moreflags |= uint(qp.r.GetByte())
-			if (moreflags & uFteEvenMore) != 0 {
+			if (moreflags & uFteYetMore) != 0 {
 				moreflags |= uint(qp.r.GetByte()) << 8
 			}
 
