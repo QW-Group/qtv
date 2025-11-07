@@ -249,7 +249,7 @@ func (sv *httpSv) prepare() (err error) {
 	{{if .WithPlayers}}
 	<tr class="notempty nebottom">
 		<td class="mappic">
-			<img src="/levelshots/{{.MapName}}.jpg" width="144" height="108" alt="{{.MapName}}" title="{{.MapName}}" />
+			<img src="/levelshots/{{.MapName}}.jpg" width="144" height="108" alt="{{.MapName}}" title="{{.MapName}}" onerror="this.onerror=null;this.src='/levelshots/_notfound.jpg'" />
 		</td>
 		<td class="svstatus" colspan="2">
 			{{template "qtvTeams" .Teams}}
