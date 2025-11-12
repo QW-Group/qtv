@@ -1,10 +1,26 @@
 name: Build
 
-on: [push, pull_request]
+on: [push, pull_request, workflow_dispatch]
 
 jobs:
   build:
     timeout-minutes: 3
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: arm
+          - os: linux
+            arch: arm64
+          - os: linux
+            arch: amd64
+          - os: windows
+            arch: amd64
+          - os: freebsd
+            arch: amd64
+          - os: openbsd
+            arch: amd64
+
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -13,4 +29,15 @@ jobs:
           go-version: 1.24.x
 
       - name: Build
-        run: make
+        run: go build -ldflags "-s -w" -o . ./...
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: "qtv-${{ matrix.os }}-${{ matrix.arch }}"
+          path: |
+            qtv-go*
+          compression-level: 9
