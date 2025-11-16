@@ -1,5 +1,6 @@
 name: build and deploy snapshots
 on: [push]
+
 jobs:
   build:
     if: github.repository == 'QW-Group/qtv'
@@ -72,7 +73,7 @@ jobs:
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
 
-          # Original folder structure preserved
+          # Preserve original folder structure
           SNAP_PATH="upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}"
           LATEST_PATH="upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}"
 
@@ -82,7 +83,6 @@ jobs:
           # Copy versioned files
           cp build/${{ matrix.target }}/qtv${{ matrix.ext }} \
              "$SNAP_PATH/${{ env.DATE }}_${SHORT_SHA}_qtv${{ matrix.ext }}"
-
           cp build/${{ matrix.target }}/qtv.md5 \
              "$SNAP_PATH/${{ env.DATE }}_${SHORT_SHA}_qtv.md5"
 
@@ -95,6 +95,6 @@ jobs:
             -o 'StrictHostKeyChecking no' \
             -o 'UserKnownHostsFile /dev/null' \
             -P ${{ secrets.SFTP_PORT }} \
-            ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/snapshots <<EOF
+            ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/snapshots <<'EOF'
 put -rp upload/snapshots/*
 EOF
