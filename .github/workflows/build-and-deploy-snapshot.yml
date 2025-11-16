@@ -72,29 +72,12 @@ jobs:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
-
-          # Preserve original folder structure
           SNAP_PATH="upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}"
           LATEST_PATH="upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}"
-
           mkdir -p "$SNAP_PATH"
           mkdir -p "$LATEST_PATH"
-
-          # Copy versioned files
-          cp build/${{ matrix.target }}/qtv${{ matrix.ext }} \
-             "$SNAP_PATH/${{ env.DATE }}_${SHORT_SHA}_qtv${{ matrix.ext }}"
-          cp build/${{ matrix.target }}/qtv.md5 \
-             "$SNAP_PATH/${{ env.DATE }}_${SHORT_SHA}_qtv.md5"
-
-          # Copy latest
+          cp build/${{ matrix.target }}/qtv${{ matrix.ext }} "$SNAP_PATH/${{ env.DATE }}_${SHORT_SHA}_qtv${{ matrix.ext }}"
+          cp build/${{ matrix.target }}/qtv.md5 "$SNAP_PATH/${{ env.DATE }}_${SHORT_SHA}_qtv.md5"
           cp build/${{ matrix.target }}/qtv${{ matrix.ext }} "$LATEST_PATH/qtv${{ matrix.ext }}"
           cp build/${{ matrix.target }}/qtv.md5 "$LATEST_PATH/qtv.md5"
-
-          # Upload via SFTP
-          sftp -rp \
-            -o 'StrictHostKeyChecking no' \
-            -o 'UserKnownHostsFile /dev/null' \
-            -P ${{ secrets.SFTP_PORT }} \
-            ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/snapshots <<'EOF'
-put -rp upload/snapshots/*
-EOF
+          sftp -rp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/snapshots <<< $'put -rp upload/snapshots/*'
