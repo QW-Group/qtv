@@ -1,0 +1,55 @@
+name: build targets
+on: [pull_request]
+jobs:
+  build:
+    if: github.repository == 'QW-Group/qtv'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+       target: [linux-amd64, linux-i686, linux-armhf, linux-aarch64, windows-x64, windows-x86]
+       include:
+         - target: linux-amd64
+           os: linux
+           arch: amd64
+           ext: ""
+         - target: linux-i686
+           os: linux
+           arch: i686
+           ext: ""
+         - target: linux-armhf
+           os: linux
+           arch: armhf
+           ext: ""
+         - target: linux-aarch64
+           os: linux
+           arch: aarch64
+           ext: ""
+         - target: windows-x64
+           os: windows
+           arch: x64
+           ext: ".exe"
+         - target: windows-x86
+           os: windows
+           arch: x86
+           ext: ".exe"
+    container:
+      image: "debian:stable"
+    steps:
+      - name: Checkout
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.24.x
+      - name: Build
+        run: go build -ldflags "-s -w" -o . ./...
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: "qtv-${{ matrix.os }}-${{ matrix.arch }}"
+          path: |
+            qtv-go*
+          compression-level: 9
