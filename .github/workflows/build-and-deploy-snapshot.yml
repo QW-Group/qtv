@@ -7,68 +7,94 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-       target: [linux-amd64, linux-i686, linux-armhf, linux-aarch64, windows-x64, windows-x86]
-       include:
-         - target: linux-amd64
-           os: linux
-           arch: amd64
-           ext: ""
-         - target: linux-i686
-           os: linux
-           arch: i686
-           ext: ""
-         - target: linux-armhf
-           os: linux
-           arch: armhf
-           ext: ""
-         - target: linux-aarch64
-           os: linux
-           arch: aarch64
-           ext: ""
-         - target: windows-x64
-           os: windows
-           arch: x64
-           ext: ".exe"
-         - target: windows-x86
-           os: windows
-           arch: x86
-           ext: ".exe"
-    container:
-      image: "debian:stable"
+        include:
+          - target: linux-arm
+            os: linux
+            arch: arm
+            ext: ""
+          - target: linux-arm64
+            os: linux
+            arch: arm64
+            ext: ""
+          - target: linux-amd64
+            os: linux
+            arch: amd64
+            ext: ""
+          - target: windows-amd64
+            os: windows
+            arch: amd64
+            ext: ".exe"
+          - target: freebsd-amd64
+            os: freebsd
+            arch: amd64
+            ext: ""
+          - target: openbsd-amd64
+            os: openbsd
+            arch: amd64
+            ext: ""
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Prepare Build Environemnt
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.24.x"
+
+      - name: Build Go binary
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
         run: |
-             apt-get update
-             apt-get -y install build-essential cmake gcc-i686-linux-gnu openssh-client
-             apt-get -y install gcc-arm-linux-gnueabihf libc6-dev-armhf-cross gcc-aarch64-linux-gnu libc6-dev-arm64-cross
-             apt-get -y install gcc-mingw-w64-x86-64 gcc-mingw-w64-i686
-      - name: Build
-        run: |
-             ./build_cmake.sh ${{ matrix.target }}
+          mkdir -p build/${{ matrix.target }}
+          go build -ldflags "-s -w" -o build/${{ matrix.target }}/qtv${{ matrix.ext }} ./...
+
       - name: Create checksum
         run: |
-             md5sum build/${{ matrix.target }}/qtv${{ matrix.ext }} > build/${{ matrix.target }}/qtv.md5
+          md5sum build/${{ matrix.target }}/qtv${{ matrix.ext }} > build/${{ matrix.target }}/qtv.md5
+
       - name: Setup SSH
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
-        shell: bash
         run: |
           ssh-agent -a $SSH_AUTH_SOCK > /dev/null
           ssh-add - <<< "${{ secrets.SSH_PRIVATE_KEY }}"
+
       - name: Set date
         run: |
-          echo "DATE=$(TZ="Europe/Amsterdam" date "+%Y%m%d-%H%M%S")" >> $GITHUB_ENV
-      - name: Deploy
+          echo "DATE=$(TZ='Europe/Amsterdam' date '+%Y%m%d-%H%M%S')" >> $GITHUB_ENV
+
+      - name: Deploy snapshot
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
-        shell: bash
         run: |
-             mkdir -p upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}
-             mkdir -p upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}/${{ env.DATE }}_${GITHUB_SHA::7}_qtv${{ matrix.ext }}
-             cp build/${{ matrix.target }}/qtv.md5 upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}/${{ env.DATE }}_${GITHUB_SHA::7}_qtv.md5
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}
-             cp build/${{ matrix.target }}/qtv.md5 upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv.md5
-             sftp -rp -o 'StrictHostKeyChecking no' -o 'UserKnownHostsFile /dev/null' -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/snapshots <<< $'put -rp upload/snapshots/*'
+          SHORT_SHA="${GITHUB_SHA::7}"
+
+          # Original folder structure preserved
+          SNAP_PATH="upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}"
+          LATEST_PATH="upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}"
+
+          mkdir -p "$SNAP_PATH"
+          mkdir -p "$LATEST_PATH"
+
+          # Copy versioned files
+          cp build/${{ matrix.target }}/qtv${{ matrix.ext }} \
+             "$SNAP_PATH/${{ env.DATE }}_${SHORT_SHA}_qtv${{ matrix.ext }}"
+
+          cp build/${{ matrix.target }}/qtv.md5 \
+             "$SNAP_PATH/${{ env.DATE }}_${SHORT_SHA}_qtv.md5"
+
+          # Copy latest
+          cp build/${{ matrix.target }}/qtv${{ matrix.ext }} "$LATEST_PATH/qtv${{ matrix.ext }}"
+          cp build/${{ matrix.target }}/qtv.md5 "$LATEST_PATH/qtv.md5"
+
+          # Upload via SFTP
+          sftp -rp \
+            -o 'StrictHostKeyChecking no' \
+            -o 'UserKnownHostsFile /dev/null' \
+            -P ${{ secrets.SFTP_PORT }} \
+            ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/snapshots <<EOF
+put -rp upload/snapshots/*
+EOF
