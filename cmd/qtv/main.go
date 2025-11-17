@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-multierror"
-	"github.com/qw-group/qtv-go/pkg/qtv"
+	"github.com/qw-group/qtv/pkg/qtv"
 	"github.com/rs/zerolog/log"
 )
 

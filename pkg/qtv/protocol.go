@@ -1,7 +1,7 @@
 package qtv
 
 import (
-	"github.com/qw-group/qtv-go/pkg/info"
+	"github.com/qw-group/qtv/pkg/info"
 	"go.uber.org/atomic"
 )
 

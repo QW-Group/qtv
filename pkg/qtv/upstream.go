@@ -15,8 +15,8 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/markphelps/optional"
 	"github.com/qqshka/ringbuffer"
-	"github.com/qw-group/qtv-go/pkg/info"
-	"github.com/qw-group/qtv-go/pkg/qfs"
+	"github.com/qw-group/qtv/pkg/info"
+	"github.com/qw-group/qtv/pkg/qfs"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/sha3"
 )
