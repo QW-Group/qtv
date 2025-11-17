@@ -71,7 +71,7 @@ jobs:
              mkdir -p upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}
              mkdir -p upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}
              cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}/${{ env.DATE }}_${GITHUB_SHA::7}_qtv${{ matrix.ext }}
-             cp build/${{ matrix.target }}/qtv.md5 upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}/${{ env.DATE }}_${GITHUB_SHA::7}_qtv.md5
+             cp build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5 upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}/${{ env.DATE }}_${GITHUB_SHA::7}_qtv${{ matrix.ext }}.md5
              cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}
-             cp build/${{ matrix.target }}/qtv.md5 upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv.md5
+             cp build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5 upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}.md5
              sftp -rp -o 'StrictHostKeyChecking no' -o 'UserKnownHostsFile /dev/null' -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/snapshots <<< $'put -rp upload/snapshots/*'
