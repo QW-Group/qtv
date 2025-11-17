@@ -7,7 +7,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-       target: [linux-amd64, linux-i686, linux-armhf, linux-aarch64, windows-x64, windows-x86]
+       target: [linux-amd64, linux-arm64, linux-arm, freebsd-amd64, openbsd-amd64, windows-x64]
        include:
          - target: linux-amd64
            os: linux
