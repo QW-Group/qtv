@@ -59,6 +59,9 @@ jobs:
         run: |
           mkdir -p build/${{ matrix.target }}
           go build -ldflags "-s -w" -o build/${{ matrix.target }}/ ./...
+      - name: Create checksum
+        run: |
+             md5sum build/${{ matrix.target }}/qtv${{ matrix.ext }} > build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5
 
   upload:
     needs: build
@@ -66,9 +69,6 @@ jobs:
     runs-on: ubuntu-latest
     if: github.repository == 'QW-Group/qtv' && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'release')
     steps:
-      - name: Create checksum
-        run: |
-             md5sum build/${{ matrix.target }}/qtv${{ matrix.ext }} > build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5
       - name: Setup SSH
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
