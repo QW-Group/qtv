@@ -13,25 +13,25 @@ jobs:
            os: linux
            arch: amd64
            ext: ""
-         - target: linux-i686
+         - target: linux-arm64
            os: linux
-           arch: i686
+           arch: arm64
            ext: ""
-         - target: linux-armhf
+         - target: linux-arm
            os: linux
-           arch: armhf
+           arch: arm
            ext: ""
-         - target: linux-aarch64
-           os: linux
-           arch: aarch64
+         - target: freebsd-amd64
+           os: freebsd
+           arch: amd64
+           ext: ""
+         - target: openbsd-amd64
+           os: openbsd
+           arch: amd64
            ext: ""
          - target: windows-x64
            os: windows
-           arch: x64
-           ext: ".exe"
-         - target: windows-x86
-           os: windows
-           arch: x86
+           arch: amd64
            ext: ".exe"
     container:
       image: "debian:stable"
