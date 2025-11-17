@@ -1,0 +1,77 @@
+name: build and deploy snapshots
+on: [push]
+jobs:
+  build:
+    if: github.repository == 'QW-Group/qtv'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+       target: [linux-amd64, linux-arm64, linux-arm, freebsd-amd64, openbsd-amd64, windows-x64]
+       include:
+         - target: linux-amd64
+           os: linux
+           arch: amd64
+           ext: ""
+         - target: linux-arm64
+           os: linux
+           arch: arm64
+           ext: ""
+         - target: linux-arm
+           os: linux
+           arch: arm
+           ext: ""
+         - target: freebsd-amd64
+           os: freebsd
+           arch: amd64
+           ext: ""
+         - target: openbsd-amd64
+           os: openbsd
+           arch: amd64
+           ext: ""
+         - target: windows-x64
+           os: windows
+           arch: amd64
+           ext: ".exe"
+#    container:
+#      image: "debian:stable"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Prepare Build Environment
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.24.x"
+      - name: Build
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p build/${{ matrix.target }}
+          go build -ldflags "-s -w" -o build/${{ matrix.target }}/ ./...
+      - name: Create checksum
+        run: |
+             md5sum build/${{ matrix.target }}/qtv${{ matrix.ext }} > build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5
+      - name: Setup SSH
+        env:
+          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+        shell: bash
+        run: |
+          ssh-agent -a $SSH_AUTH_SOCK > /dev/null
+          ssh-add - <<< "${{ secrets.SSH_PRIVATE_KEY }}"
+      - name: Set date
+        run: |
+          echo "DATE=$(TZ="Europe/Amsterdam" date "+%Y%m%d-%H%M%S")" >> $GITHUB_ENV
+      - name: Deploy
+        env:
+          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+        shell: bash
+        run: |
+             mkdir -p upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}
+             mkdir -p upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}
+             cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}/${{ env.DATE }}_${GITHUB_SHA::7}_qtv${{ matrix.ext }}
+             cp build/${{ matrix.target }}/qtv.md5 upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}/${{ env.DATE }}_${GITHUB_SHA::7}_qtv.md5
+             cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}
+             cp build/${{ matrix.target }}/qtv.md5 upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv.md5
+             sftp -rp -o 'StrictHostKeyChecking no' -o 'UserKnownHostsFile /dev/null' -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/snapshots <<< $'put -rp upload/snapshots/*'
