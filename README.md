@@ -23,7 +23,7 @@ if you want to do it faster execute `make build`, you still need to execute `mak
 #### Using docker (recommended, unless you have recent golang in system)
 ```
 docker pull golang
-docker run --rm -v "$PWD":/qtv-go -w /qtv-go golang:latest make
+docker run --rm -v "$PWD":/qtv -w /qtv golang:latest make
 ```
 
 #### Using go from the system
@@ -36,7 +36,7 @@ make
 #### Using docker
 ```
 docker pull golang
-docker run --rm -v "$PWD":/qtv-go -w /qtv-go -e GOOS=windows golang:latest make
+docker run --rm -v "$PWD":/qtv -w /qtv -e GOOS=windows golang:latest make
 ```
 
 ## Configuring
@@ -49,9 +49,9 @@ There is no useful command line switches.
 Unlike traditional quake engines if you wish to pass commands
 from command line to be executed by QTV then you have to use it as is:
 ```
-./qtv-go exec example.cfg
+./qtv exec example.cfg
 ```
 If you need to pass multiple commands then you have to use semicolon (you have to escape it from the shell):
 ```
-./qtv-go exec example1.cfg ";" exec example2.cfg
+./qtv exec example1.cfg ";" exec example2.cfg
 ```

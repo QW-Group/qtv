@@ -5,7 +5,6 @@
 *.so
 *.dylib
 /.vscode
-/qtv-go
 /build
 
 demos/
