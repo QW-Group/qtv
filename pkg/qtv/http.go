@@ -530,12 +530,12 @@ func (sv *httpSv) serve(l net.Listener) (err error) {
 
 	r.Handle("/", http.RedirectHandler("/nowplaying/", http.StatusMovedPermanently))
 
-	r.Handle("/nowplaying/", gzipHandler(http.HandlerFunc(sv.nowPlayingHandler)))
-	r.Handle("/demolist/", gzipHandler(http.HandlerFunc(sv.demosHandler)))
+	r.Handle("/nowplaying/", GzipHandler(http.HandlerFunc(sv.nowPlayingHandler)))
+	r.Handle("/demolist/", GzipHandler(http.HandlerFunc(sv.demosHandler)))
 	r.HandleFunc("/upload/", sv.uploadFile)
 
 	// Compat with original QTV
-	r.Handle("/demo_filenames", gzipHandler(http.HandlerFunc(sv.demosHandlerCompat)))
+	r.Handle("/demo_filenames", GzipHandler(http.HandlerFunc(sv.demosHandlerCompat)))
 	r.HandleFunc("/dl/demos/{file:.*}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/demos/"+url.PathEscape(mux.Vars(r)["file"]), http.StatusMovedPermanently)
 	})

@@ -11,50 +11,44 @@ type gzipResponseWriter struct {
 	writer *gzip.Writer
 }
 
-func (w gzipResponseWriter) Write(b []byte) (int, error) {
-	w.Header().Del("Content-Length")
+func (w *gzipResponseWriter) Write(b []byte) (int, error) {
+	w.Header().Del("Content-Length") // no longer valid once compressed
 	return w.writer.Write(b)
 }
 
-func (w gzipResponseWriter) Close() error {
+func (w *gzipResponseWriter) Close() error {
 	return w.writer.Close()
 }
 
-func (w gzipResponseWriter) Flush() {
+func (w *gzipResponseWriter) Flush() {
 	if fl, ok := w.ResponseWriter.(http.Flusher); ok {
-		// flush gzip writer first to ensure data is forwarded.
-		_ = w.writer.Flush()
+		_ = w.writer.Flush() // flush gzip writer first to ensure data is forwarded.
 		fl.Flush()
 	}
 }
 
 // compresses response when the client accepts gzip
-func gzipHandler(next http.Handler) http.Handler {
+func GzipHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// accepts gzip encoding?
+		// skip if client does not accept gzip
 		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// already encoded?
-		if encoding := w.Header().Get("Content-Encoding"); encoding != "" {
-			next.ServeHTTP(w, r)
-			return
+		// wrap ResponseWriter
+		gzipWriter := gzip.NewWriter(w)
+		gzipRespWriter := &gzipResponseWriter{
+			ResponseWriter: w,
+			writer:         gzipWriter,
 		}
 
-		// wrap the response writer with gzip writer
-		gzip_writer := gzip.NewWriter(w)
-		gzip_res_writer := gzipResponseWriter{ResponseWriter: w, writer: gzip_writer}
-
 		// set headers
-		headers := w.Header()
-		headers.Set("Content-Encoding", "gzip")
-		headers.Add("Vary", "Accept-Encoding")
-		headers.Del("Content-Length") // no longer valid once compressed.
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Add("Vary", "Accept-Encoding")
+		w.Header().Del("Content-Length")
 
-		// serve the request
-		defer gzip_res_writer.Close()
-		next.ServeHTTP(gzip_res_writer, r)
+		defer gzipRespWriter.Close() // ensure gzip writer is closed
+		next.ServeHTTP(gzipRespWriter, r)
 	})
 }
