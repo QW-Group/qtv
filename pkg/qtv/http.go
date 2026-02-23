@@ -181,7 +181,7 @@ func (sv *httpSv) prepare() (err error) {
 <h1>QuakeTV: Demo Listing</h1>
 <center>
 <form enctype="multipart/form-data" action="/upload/" method="post">
-	<input type="file" name="file" />
+	<input type="file" name="file" accept=".mvd" />
 	<input type="submit" value="upload demo" />
 </form>
 </center>
@@ -530,12 +530,12 @@ func (sv *httpSv) serve(l net.Listener) (err error) {
 
 	r.Handle("/", http.RedirectHandler("/nowplaying/", http.StatusMovedPermanently))
 
-	r.HandleFunc("/nowplaying/", sv.nowPlayingHandler)
-	r.HandleFunc("/demolist/", sv.demosHandler)
+	r.Handle("/nowplaying/", gzipHandler(http.HandlerFunc(sv.nowPlayingHandler)))
+	r.Handle("/demolist/", gzipHandler(http.HandlerFunc(sv.demosHandler)))
 	r.HandleFunc("/upload/", sv.uploadFile)
 
 	// Compat with original QTV
-	r.HandleFunc("/demo_filenames", sv.demosHandlerCompat)
+	r.Handle("/demo_filenames", gzipHandler(http.HandlerFunc(sv.demosHandlerCompat)))
 	r.HandleFunc("/dl/demos/{file:.*}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/demos/"+url.PathEscape(mux.Vars(r)["file"]), http.StatusMovedPermanently)
 	})
