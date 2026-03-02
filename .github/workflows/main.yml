@@ -89,12 +89,12 @@ jobs:
         with:
           path: build
 
-      - name: Setup SSH
-        env:
-          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
-        run: |
-          ssh-agent -a $SSH_AUTH_SOCK > /dev/null
-          ssh-add - <<< "${{ secrets.SSH_PRIVATE_KEY }}"
+      # - name: Setup SSH
+      #   env:
+      #     SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+      #   run: |
+      #     ssh-agent -a $SSH_AUTH_SOCK > /dev/null
+      #     ssh-add - <<< "${{ secrets.SSH_PRIVATE_KEY }}"
 
       - name: Set date
         run: echo "DATE=$(TZ='Europe/Amsterdam' date '+%Y%m%d-%H%M%S')" >> $GITHUB_ENV
