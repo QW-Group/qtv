@@ -2,7 +2,6 @@ name: main
 
 on:
   push:
-    # Only build branches on push, tags will be handled by 'release' job.
     branches:
       - "**"
   pull_request:
@@ -26,22 +25,22 @@ jobs:
             windows-x64,
           ]
         include:
-          # - target: linux-amd64
-          #   os: linux
-          #   arch: amd64
-          #   ext: ""
-          # - target: linux-arm64
-          #   os: linux
-          #   arch: arm64
-          #   ext: ""
-          # - target: linux-arm
-          #   os: linux
-          #   arch: arm
-          #   ext: ""
-          # - target: freebsd-amd64
-          #   os: freebsd
-          #   arch: amd64
-          #   ext: ""
+          - target: freebsd-amd64
+            os: freebsd
+            arch: amd64
+            ext: ""
+          - target: linux-amd64
+            os: linux
+            arch: amd64
+            ext: ""
+          - target: linux-arm64
+            os: linux
+            arch: arm64
+            ext: ""
+          - target: linux-arm
+            os: linux
+            arch: arm
+            ext: ""
           - target: openbsd-amd64
             os: openbsd
             arch: amd64
@@ -79,7 +78,6 @@ jobs:
   upload:
     needs: build
     runs-on: ubuntu-latest
-    # if: github.repository == 'QW-Group/qtv' && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'release')
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -89,13 +87,6 @@ jobs:
         with:
           path: build
 
-      # - name: Setup SSH
-      #   env:
-      #     SSH_AUTH_SOCK: /tmp/ssh_agent.sock
-      #   run: |
-      #     ssh-agent -a $SSH_AUTH_SOCK > /dev/null
-      #     ssh-add - <<< "${{ secrets.SSH_PRIVATE_KEY }}"
-
       - name: Set date
         run: echo "DATE=$(TZ='Europe/Amsterdam' date '+%Y%m%d-%H%M%S')" >> $GITHUB_ENV
 
@@ -103,24 +94,22 @@ jobs:
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
         run: |
-          # Determine type
           IS_RELEASE=false
-          if [[ $GITHUB_REF == refs/tags/* ]]; then
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
               IS_RELEASE=true
           fi
 
-          # Process builds
           for DIR_PATH in build/qtv-*; do
-              FILE_PATH=$(find "$DIR_PATH" -maxdepth 1 -type f -name "qtv*" | head -n1)
-              FILENAME=$(basename "$FILE_PATH")    # qtv or qtv.exe
+              FILE_PATH=$(find "${DIR_PATH}" -maxdepth 1 -type f -name "qtv*" | head -n1)
+              FILENAME=$(basename "${FILE_PATH}")    # qtv or qtv.exe
 
-              DIR_NAME=$(basename "$DIR_PATH")     # qtv-linux-amd64
-              OS_ARCH="${DIR_NAME#qtv-}"           # linux-amd64
-              OS="${OS_ARCH%-*}"                   # linux
-              ARCH="${OS_ARCH##*-}"                # amd64
+              DIR_NAME=$(basename "${DIR_PATH}")     # qtv-linux-amd64
+              OS_ARCH="${DIR_NAME#qtv-}"             # linux-amd64
+              OS="${OS_ARCH%-*}"                     # linux
+              ARCH="${OS_ARCH##*-}"                  # amd64
 
-              CHECKSUM_PATH="$FILE_PATH.md5"
-              md5sum "$FILE_PATH" > "$CHECKSUM_PATH"
+              CHECKSUM_PATH="${FILE_PATH}.md5"
+              md5sum "${FILE_PATH}" > "${CHECKSUM_PATH}"
 
               if $IS_RELEASE; then
                   BASE_DIR="upload/releases"
@@ -132,22 +121,21 @@ jobs:
 
               LATEST_DIR="${BASE_DIR}/latest/${OS}/${ARCH}"
 
-              mkdir -p "$VERSION_DIR" "$LATEST_DIR"
+              mkdir -p "${VERSION_DIR}" "${LATEST_DIR}"
 
               if $IS_RELEASE; then
-                  cp "$FILE_PATH" "$VERSION_DIR/$FILENAME"
-                  cp "$CHECKSUM_PATH" "$VERSION_DIR/$FILENAME.md5"
+                  cp "${FILE_PATH}" "${VERSION_DIR}/${FILENAME}"
+                  cp "${CHECKSUM_PATH}" "${VERSION_DIR}/${FILENAME}.md5"
               else
-                  SNAP_NAME="${DATE}_${GITHUB_SHA::7}_$FILENAME"
-                  cp "$FILE_PATH" "$VERSION_DIR/$SNAP_NAME"
-                  cp "$CHECKSUM_PATH" "$VERSION_DIR/$SNAP_NAME.md5"
+                  SNAPSHOT_NAME="${DATE}_${GITHUB_SHA::7}_${FILENAME}"
+                  cp "${FILE_PATH}" "${VERSION_DIR}/${SNAPSHOT_NAME}"
+                  cp "${CHECKSUM_PATH}" "${VERSION_DIR}/${SNAPSHOT_NAME}.md5"
               fi
 
-              cp "$FILE_PATH" "$LATEST_DIR/$FILENAME"
-              cp "$CHECKSUM_PATH" "$LATEST_DIR/$FILENAME.md5"
+              cp "${FILE_PATH}" "${LATEST_DIR}/${FILENAME}"
+              cp "${CHECKSUM_PATH}" "${LATEST_DIR}/${FILENAME}.md5"
           done
 
-          # SFTP upload
           if $IS_RELEASE; then
               REMOTE_DIR=/releases
               LOCAL_DIR=upload/releases
@@ -156,7 +144,7 @@ jobs:
               LOCAL_DIR=upload/snapshots
           fi
 
-          echo $REMOTE_DIR
-          tree $LOCAL_DIR
+          echo "Files to upload:"
+          tree "${LOCAL_DIR}"
 
-          # sftp -rp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }} <<< $"put -rp $local_dir/* $remote_dir"
+          # sftp -rp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "${{ secrets.SFTP_PORT }}" "${{ secrets.SFTP_USERNAME }}"@"${{ secrets.SFTP_HOST }}" <<< $"put -rp ${LOCAL_DIR}/* ${REMOTE_DIR}"
