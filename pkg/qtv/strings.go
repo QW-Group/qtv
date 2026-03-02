@@ -129,19 +129,13 @@ func tokenizeString(s string) (tr tokenizerResult, i int) {
 }
 
 func unquote(s string) string {
-	if strings.HasPrefix(s, "\"") {
-		s = s[1:]
-	}
-	if strings.HasSuffix(s, "\"") {
-		s = s[0 : len(s)-1]
-	}
-	return s
+	return strings.Trim(s, "\"")
 }
 
 // Replace old bytes with new bytes in string. Does not honor UTF-8.
 func replaceAll(s string, old byte, new byte) string {
 	b := []byte(s)
-	for i := 0; i < len(b); i++ {
+	for i := range b {
 		if b[i] == old {
 			b[i] = new
 		}
@@ -151,7 +145,7 @@ func replaceAll(s string, old byte, new byte) string {
 
 func redText(s string) string {
 	b := []byte(s)
-	for i := 0; i < len(b); i++ {
+	for i := range b {
 		if b[i] > 32 && b[i] < 128 {
 			b[i] |= 1 << 7
 		}
@@ -207,7 +201,7 @@ func normalizeText(s string) string {
 
 func randomString(size int) string {
 	var b strings.Builder
-	for i := 0; i < size; i++ {
+	for range size {
 		b.WriteByte('A' + byte(rand.Uint32())%('Z'-'A'+1))
 	}
 	return b.String()

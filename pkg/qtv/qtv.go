@@ -506,11 +506,9 @@ func (qtv *QTV) ListenAndServe() (err error) {
 	g.Go(func() error { return qtv.mainLoop() })
 	g.Go(func() error { return mux.Serve() })
 
-	select {
-	case <-qtv.ctx.Done():
-		mux.Close()
-		qtv.udpSv.close() // We have defer with close above but this will speed up things.
-	}
+	<-qtv.ctx.Done()
+	mux.Close()
+	qtv.udpSv.close() // We have defer with close above but this will speed up things.
 
 	return g.Wait()
 }

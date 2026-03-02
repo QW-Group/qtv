@@ -144,7 +144,7 @@ func (ds *dStream) processClientInputMsg() (done bool, err error) {
 }
 
 // Send text as "svc_print" to particular dStream.
-func (ds *dStream) svcPrintf(level printLevel, format string, a ...interface{}) (err error) {
+func (ds *dStream) svcPrintf(level printLevel, format string, a ...any) (err error) {
 	defer func() { err = multierror.Prefix(err, "dStream.svcPrintf:") }()
 
 	us := ds.linkedUs
@@ -701,7 +701,7 @@ func (ds *dStream) sayClientCmd(tr *tokenizerResult) (err error) {
 	}
 
 	msg := us.qp.w.Clear()
-	us.qp.putSvcPrintf(msg, printChat, s)
+	us.qp.putSvcPrintf(msg, printChat, "%s", s)
 	if msg.error {
 		return ds.svcPrintf(printHigh, "say failed\n")
 	}
@@ -866,7 +866,7 @@ func (ds *dStream) userListActionToString(action qtvUserListAction, isPrefix boo
 func (ds *dStream) userListActionToMsg(msg *netMsgW, action qtvUserListAction) {
 	us := ds.linkedUs
 	s := ds.userListActionToString(action, true)
-	us.qp.putStuffTextf(msg, s)
+	us.qp.putStuffTextf(msg, "%s", s)
 }
 
 // Notify about user list change all downstreams and upstream.

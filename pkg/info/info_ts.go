@@ -46,13 +46,13 @@ func (its *InfoTs) GetOK(name string) (value string, ok bool) {
 	return its.info.GetOK(name)
 }
 
-func (its *InfoTs) Set(name string, a ...interface{}) error {
+func (its *InfoTs) Set(name string, a ...any) error {
 	its.mu.Lock()
 	defer its.mu.Unlock()
 	return its.info.Set(name, a...)
 }
 
-func (its *InfoTs) Setf(name string, format string, a ...interface{}) error {
+func (its *InfoTs) Setf(name string, format string, a ...any) error {
 	its.mu.Lock()
 	defer its.mu.Unlock()
 	return its.info.Setf(name, format, a...)
