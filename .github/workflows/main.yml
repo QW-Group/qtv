@@ -79,7 +79,7 @@ jobs:
   upload:
     needs: build
     runs-on: ubuntu-latest
-    if: github.repository == 'QW-Group/qtv' && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'release')
+    # if: github.repository == 'QW-Group/qtv' && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'release')
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -153,4 +153,7 @@ jobs:
             local_dir=upload/snapshots
           fi
 
-          sftp -rp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }} <<< $"put -rp $local_dir/* $remote_dir"
+          ls -l $local_dir
+          echo $remote_dir
+
+          # sftp -rp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }} <<< $"put -rp $local_dir/* $remote_dir"
