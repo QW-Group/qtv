@@ -74,6 +74,7 @@ jobs:
           name: qtv-${{ matrix.target }}
           path: build/${{ matrix.target }}/qtv*
           compression-level: 9
+          retention-days: 3
 
   upload:
     needs: build
