@@ -153,7 +153,7 @@ jobs:
             local_dir=upload/snapshots
           fi
 
-          ls -l $local_dir
           echo $remote_dir
+          tree $local_dir
 
           # sftp -rp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }} <<< $"put -rp $local_dir/* $remote_dir"
