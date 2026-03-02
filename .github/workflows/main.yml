@@ -105,55 +105,55 @@ jobs:
         run: |
           # Determine type
           IS_RELEASE=false
-          IS_SNAPSHOT=false
-
           if [[ $GITHUB_REF == refs/tags/* ]]; then
-            IS_RELEASE=true
-          else
-            IS_SNAPSHOT=true
+              IS_RELEASE=true
           fi
 
           # Process builds
-          for target_dir in build/*; do
-            target_name=$(basename "$target_dir")
-            bin_file=$(find "$target_dir" -maxdepth 1 -type f -name "qtv*")
-            checksum_file="$bin_file.md5"
+          for BIN_PATH in build/qtv-*; do
+              FILE_NAME=$(basename "$BIN_PATH")     # qtv-linux-amd64
+              OS_ARCH="${FILE_NAME#qtv-}"           # linux-amd64
+              OS="${OS_ARCH%-*}"                    # linux
+              ARCH="${OS_ARCH##*-}"                 # amd64
 
-            # Generate checksum
-            md5sum "$bin_file" > "$checksum_file"
+              CHECKSUM_PATH="$BIN_PATH.md5"
+              md5sum "$BIN_PATH" > "$CHECKSUM_PATH"
 
-            if $IS_RELEASE; then
-              DEST_DIR=upload/releases/${GITHUB_REF_NAME}/${target_name}
-              LATEST_DIR=upload/releases/latest/${target_name}
-            else
-              DEST_DIR=upload/snapshots/${target_name}
-              LATEST_DIR=upload/snapshots/latest/${target_name}
-            fi
+              if $IS_RELEASE; then
+                  BASE_DIR="upload/releases"
+                  VERSION_DIR="${BASE_DIR}/${GITHUB_REF_NAME}/${OS}/${ARCH}"
+              else
+                  BASE_DIR="upload/snapshots"
+                  VERSION_DIR="${BASE_DIR}/${OS}/${ARCH}"
+              fi
 
-            mkdir -p "$DEST_DIR" "$LATEST_DIR"
+              LATEST_DIR="${BASE_DIR}/latest/${OS}/${ARCH}"
 
-            # Copy binaries and checksums
-            cp "$bin_file" "$checksum_file" "$DEST_DIR/"
-            cp "$bin_file" "$checksum_file" "$LATEST_DIR/"
+              mkdir -p "$VERSION_DIR" "$LATEST_DIR"
 
-            # For snapshots, append date and short SHA
-            if $IS_SNAPSHOT; then
-              for file in "$DEST_DIR"/qtv*; do
-              mv "$file" "$DEST_DIR/${DATE}_${GITHUB_SHA::7}_$(basename "$file")"
-              done
-            fi
+              if $IS_RELEASE; then
+                  cp "$BIN_PATH" "$VERSION_DIR/qtv"
+                  cp "$CHECKSUM_PATH" "$VERSION_DIR/qtv.md5"
+              else
+                  SNAP_NAME="${DATE}_${GITHUB_SHA::7}_qtv"
+                  cp "$BIN_PATH" "$VERSION_DIR/$SNAP_NAME"
+                  cp "$CHECKSUM_PATH" "$VERSION_DIR/$SNAP_NAME.md5"
+              fi
+
+              cp "$BIN_PATH" "$LATEST_DIR/qtv"
+              cp "$CHECKSUM_PATH" "$LATEST_DIR/qtv.md5"
           done
 
           # SFTP upload
-          if [[ $GITHUB_REF == refs/tags/* ]]; then
-            remote_dir=/releases
-            local_dir=upload/releases
+          if $IS_RELEASE; then
+              REMOTE_DIR=/releases
+              LOCAL_DIR=upload/releases
           else
-            remote_dir=/snapshots
-            local_dir=upload/snapshots
+              REMOTE_DIR=/snapshots
+              LOCAL_DIR=upload/snapshots
           fi
 
-          echo $remote_dir
-          tree $local_dir
+          echo $REMOTE_DIR
+          tree $LOCAL_DIR
 
           # sftp -rp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }} <<< $"put -rp $local_dir/* $remote_dir"
