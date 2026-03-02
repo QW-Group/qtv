@@ -4,7 +4,7 @@ on:
   push:
     # Only build branches on push, tags will be handled by 'release' job.
     branches:
-    - '**'
+      - "**"
   pull_request:
   workflow_dispatch:
   release:
@@ -16,40 +16,48 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-       target: [linux-amd64, linux-arm64, linux-arm, freebsd-amd64, openbsd-amd64, windows-x64]
-       include:
-         - target: linux-amd64
-           os: linux
-           arch: amd64
-           ext: ""
-         - target: linux-arm64
-           os: linux
-           arch: arm64
-           ext: ""
-         - target: linux-arm
-           os: linux
-           arch: arm
-           ext: ""
-         - target: freebsd-amd64
-           os: freebsd
-           arch: amd64
-           ext: ""
-         - target: openbsd-amd64
-           os: openbsd
-           arch: amd64
-           ext: ""
-         - target: windows-x64
-           os: windows
-           arch: amd64
-           ext: ".exe"
+        target:
+          [
+            freebsd-amd64,
+            linux-amd64,
+            linux-arm,
+            linux-arm64,
+            openbsd-amd64,
+            windows-x64,
+          ]
+        include:
+          - target: linux-amd64
+            os: linux
+            arch: amd64
+            ext: ""
+          - target: linux-arm64
+            os: linux
+            arch: arm64
+            ext: ""
+          - target: linux-arm
+            os: linux
+            arch: arm
+            ext: ""
+          - target: freebsd-amd64
+            os: freebsd
+            arch: amd64
+            ext: ""
+          - target: openbsd-amd64
+            os: openbsd
+            arch: amd64
+            ext: ""
+          - target: windows-x64
+            os: windows
+            arch: amd64
+            ext: ".exe"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Prepare Build Environment
         uses: actions/setup-go@v6
         with:
-          go-version: "1.24.x"
+          go-version: "1.26.x"
 
       - name: Build
         env:
@@ -60,63 +68,88 @@ jobs:
           mkdir -p build/${{ matrix.target }}
           go build -ldflags "-s -w" -o build/${{ matrix.target }}/ ./...
 
-      - name: Create checksum
-        run: |
-             md5sum build/${{ matrix.target }}/qtv${{ matrix.ext }} > build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5
-
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v6
         with:
           name: qtv-${{ matrix.target }}
-          path: |
-            qtv.*
+          path: build/${{ matrix.target }}/qtv*
           compression-level: 9
 
   upload:
     needs: build
-    timeout-minutes: 10
     runs-on: ubuntu-latest
     if: github.repository == 'QW-Group/qtv' && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'release')
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          path: qtv
+        uses: actions/checkout@v6
 
-      - name: Download Artifacts
-        uses: actions/download-artifact@v4
+      - name: Download build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: build
 
       - name: Setup SSH
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
-        shell: bash
         run: |
           ssh-agent -a $SSH_AUTH_SOCK > /dev/null
           ssh-add - <<< "${{ secrets.SSH_PRIVATE_KEY }}"
 
       - name: Set date
-        run: |
-          echo "DATE=$(TZ="Europe/Amsterdam" date "+%Y%m%d-%H%M%S")" >> $GITHUB_ENV
+        run: echo "DATE=$(TZ='Europe/Amsterdam' date '+%Y%m%d-%H%M%S')" >> $GITHUB_ENV
 
       - name: Deploy
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
-        shell: bash
         run: |
+          # Determine type
+          IS_RELEASE=false
+          IS_SNAPSHOT=false
+
           if [[ $GITHUB_REF == refs/tags/* ]]; then
-             mkdir -p upload/releases/${{ github.ref_name }}/${{ matrix.os }}/${{ matrix.arch }}
-             mkdir -p upload/releases/latest/${{ matrix.os }}/${{ matrix.arch }}
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/releases/${{ github.ref_name }}/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}
-             cp build/${{ matrix.target }}/qtv{{ matrix.ext }}.md5 upload/releases/${{ github.ref_name }}/${{ matrix.os }}/${{ matrix.arch }}/qtv{{ matrix.ext }}.md5
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/releases/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}
-             cp build/${{ matrix.target }}/qtv{{ matrix.ext }}.md5 upload/releases/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv{{ matrix.ext }}.md5
-             sftp -rp -o 'StrictHostKeyChecking no' -o 'UserKnownHostsFile /dev/null' -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/releases <<< $'put -rp upload/releases/*'
+            IS_RELEASE=true
           else
-             mkdir -p upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}
-             mkdir -p upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}/${{ env.DATE }}_${GITHUB_SHA::7}_qtv${{ matrix.ext }}
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5 upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}/${{ env.DATE }}_${GITHUB_SHA::7}_qtv${{ matrix.ext }}.md5
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5 upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}.md5
-             sftp -rp -o 'StrictHostKeyChecking no' -o 'UserKnownHostsFile /dev/null' -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/snapshots <<< $'put -rp upload/snapshots/*'
+            IS_SNAPSHOT=true
           fi
+
+          # Process builds
+          for target_dir in build/*; do
+            target_name=$(basename "$target_dir")
+            bin_file=$(find "$target_dir" -maxdepth 1 -type f -name "qtv*")
+            checksum_file="$bin_file.md5"
+
+            # Generate checksum
+            md5sum "$bin_file" > "$checksum_file"
+
+            if $IS_RELEASE; then
+              DEST_DIR=upload/releases/${GITHUB_REF_NAME}/${target_name}
+              LATEST_DIR=upload/releases/latest/${target_name}
+            else
+              DEST_DIR=upload/snapshots/${target_name}
+              LATEST_DIR=upload/snapshots/latest/${target_name}
+            fi
+
+            mkdir -p "$DEST_DIR" "$LATEST_DIR"
+
+            # Copy binaries and checksums
+            cp "$bin_file" "$checksum_file" "$DEST_DIR/"
+            cp "$bin_file" "$checksum_file" "$LATEST_DIR/"
+
+            # For snapshots, append date and short SHA
+            if $IS_SNAPSHOT; then
+              for file in "$DEST_DIR"/qtv*; do
+              mv "$file" "$DEST_DIR/${DATE}_${GITHUB_SHA::7}_$(basename "$file")"
+              done
+            fi
+          done
+
+          # SFTP upload
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            remote_dir=/releases
+            local_dir=upload/releases
+          else
+            remote_dir=/snapshots
+            local_dir=upload/snapshots
+          fi
+
+          sftp -rp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }} <<< $"put -rp $local_dir/* $remote_dir"
