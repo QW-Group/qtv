@@ -87,9 +87,6 @@ jobs:
         with:
           path: build
 
-      - name: Set date
-        run: echo "DATE=$(TZ='Europe/Amsterdam' date '+%Y%m%d-%H%M%S')" >> $GITHUB_ENV
-
       - name: Deploy
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
@@ -97,6 +94,14 @@ jobs:
           IS_RELEASE=false
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
               IS_RELEASE=true
+          fi
+
+          if $IS_RELEASE; then
+              LOCAL_BASE_DIR="upload/releases"
+              REMOTE_BASE_DIR="/releases"
+          else
+              LOCAL_BASE_DIR="upload/snapshots"
+              REMOTE_BASE_DIR="/snapshots"
           fi
 
           for DIR_PATH in build/qtv-*; do
@@ -112,14 +117,12 @@ jobs:
               md5sum "${FILE_PATH}" > "${CHECKSUM_PATH}"
 
               if $IS_RELEASE; then
-                  BASE_DIR="upload/releases"
-                  VERSION_DIR="${BASE_DIR}/${GITHUB_REF_NAME}/${OS}/${ARCH}"
+                  VERSION_DIR="${LOCAL_BASE_DIR}/${GITHUB_REF_NAME}/${OS}/${ARCH}"
               else
-                  BASE_DIR="upload/snapshots"
-                  VERSION_DIR="${BASE_DIR}/${OS}/${ARCH}"
+                  VERSION_DIR="${LOCAL_BASE_DIR}/${OS}/${ARCH}"
               fi
 
-              LATEST_DIR="${BASE_DIR}/latest/${OS}/${ARCH}"
+              LATEST_DIR="${LOCAL_BASE_DIR}/latest/${OS}/${ARCH}"
 
               mkdir -p "${VERSION_DIR}" "${LATEST_DIR}"
 
@@ -127,7 +130,8 @@ jobs:
                   cp "${FILE_PATH}" "${VERSION_DIR}/${FILENAME}"
                   cp "${CHECKSUM_PATH}" "${VERSION_DIR}/${FILENAME}.md5"
               else
-                  SNAPSHOT_NAME="${DATE}_${GITHUB_SHA::7}_${FILENAME}"
+                  TIMESTAMP=$(TZ='Europe/Amsterdam' date '+%Y%m%d-%H%M%S')
+                  SNAPSHOT_NAME="${TIMESTAMP}_${GITHUB_SHA::7}_${FILENAME}"
                   cp "${FILE_PATH}" "${VERSION_DIR}/${SNAPSHOT_NAME}"
                   cp "${CHECKSUM_PATH}" "${VERSION_DIR}/${SNAPSHOT_NAME}.md5"
               fi
@@ -136,15 +140,7 @@ jobs:
               cp "${CHECKSUM_PATH}" "${LATEST_DIR}/${FILENAME}.md5"
           done
 
-          if $IS_RELEASE; then
-              REMOTE_DIR=/releases
-              LOCAL_DIR=upload/releases
-          else
-              REMOTE_DIR=/snapshots
-              LOCAL_DIR=upload/snapshots
-          fi
-
           echo "Files to upload:"
-          tree "${LOCAL_DIR}"
+          tree "${LOCAL_BASE_DIR}"
 
-          # sftp -rp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "${{ secrets.SFTP_PORT }}" "${{ secrets.SFTP_USERNAME }}"@"${{ secrets.SFTP_HOST }}" <<< $"put -rp ${LOCAL_DIR}/* ${REMOTE_DIR}"
+          # sftp -rp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "${{ secrets.SFTP_PORT }}" "${{ secrets.SFTP_USERNAME }}"@"${{ secrets.SFTP_HOST }}" <<< $"put -rp ${LOCAL_BASE_DIR}/* ${REMOTE_BASE_DIR}"
