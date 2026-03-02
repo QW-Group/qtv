@@ -110,9 +110,10 @@ jobs:
           fi
 
           # Process builds
-          for BIN_PATH in build/qtv-*; do
-              FILE_NAME=$(basename "$BIN_PATH")     # qtv-linux-amd64
-              OS_ARCH="${FILE_NAME#qtv-}"           # linux-amd64
+          for DIR_PATH in build/qtv-*; do
+              BIN_PATH=$(find "$DIR_PATH" -maxdepth 1 -type f -name "qtv*" | head -n1)
+              DIR_NAME=$(basename "$DIR_PATH")     # qtv-linux-amd64
+              OS_ARCH="${DIR_NAME#qtv-}"           # linux-amd64
               OS="${OS_ARCH%-*}"                    # linux
               ARCH="${OS_ARCH##*-}"                 # amd64
 
