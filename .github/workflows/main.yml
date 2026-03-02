@@ -26,22 +26,22 @@ jobs:
             windows-x64,
           ]
         include:
-          - target: linux-amd64
-            os: linux
-            arch: amd64
-            ext: ""
-          - target: linux-arm64
-            os: linux
-            arch: arm64
-            ext: ""
-          - target: linux-arm
-            os: linux
-            arch: arm
-            ext: ""
-          - target: freebsd-amd64
-            os: freebsd
-            arch: amd64
-            ext: ""
+          # - target: linux-amd64
+          #   os: linux
+          #   arch: amd64
+          #   ext: ""
+          # - target: linux-arm64
+          #   os: linux
+          #   arch: arm64
+          #   ext: ""
+          # - target: linux-arm
+          #   os: linux
+          #   arch: arm
+          #   ext: ""
+          # - target: freebsd-amd64
+          #   os: freebsd
+          #   arch: amd64
+          #   ext: ""
           - target: openbsd-amd64
             os: openbsd
             arch: amd64
@@ -111,14 +111,16 @@ jobs:
 
           # Process builds
           for DIR_PATH in build/qtv-*; do
-              BIN_PATH=$(find "$DIR_PATH" -maxdepth 1 -type f -name "qtv*" | head -n1)
+              FILE_PATH=$(find "$DIR_PATH" -maxdepth 1 -type f -name "qtv*" | head -n1)
+              FILENAME=$(basename "$FILE_PATH")    # qtv or qtv.exe
+
               DIR_NAME=$(basename "$DIR_PATH")     # qtv-linux-amd64
               OS_ARCH="${DIR_NAME#qtv-}"           # linux-amd64
-              OS="${OS_ARCH%-*}"                    # linux
-              ARCH="${OS_ARCH##*-}"                 # amd64
+              OS="${OS_ARCH%-*}"                   # linux
+              ARCH="${OS_ARCH##*-}"                # amd64
 
-              CHECKSUM_PATH="$BIN_PATH.md5"
-              md5sum "$BIN_PATH" > "$CHECKSUM_PATH"
+              CHECKSUM_PATH="$FILE_PATH.md5"
+              md5sum "$FILE_PATH" > "$CHECKSUM_PATH"
 
               if $IS_RELEASE; then
                   BASE_DIR="upload/releases"
@@ -133,16 +135,16 @@ jobs:
               mkdir -p "$VERSION_DIR" "$LATEST_DIR"
 
               if $IS_RELEASE; then
-                  cp "$BIN_PATH" "$VERSION_DIR/qtv"
-                  cp "$CHECKSUM_PATH" "$VERSION_DIR/qtv.md5"
+                  cp "$FILE_PATH" "$VERSION_DIR/$FILENAME"
+                  cp "$CHECKSUM_PATH" "$VERSION_DIR/$FILENAME.md5"
               else
-                  SNAP_NAME="${DATE}_${GITHUB_SHA::7}_qtv"
-                  cp "$BIN_PATH" "$VERSION_DIR/$SNAP_NAME"
+                  SNAP_NAME="${DATE}_${GITHUB_SHA::7}_$FILENAME"
+                  cp "$FILE_PATH" "$VERSION_DIR/$SNAP_NAME"
                   cp "$CHECKSUM_PATH" "$VERSION_DIR/$SNAP_NAME.md5"
               fi
 
-              cp "$BIN_PATH" "$LATEST_DIR/qtv"
-              cp "$CHECKSUM_PATH" "$LATEST_DIR/qtv.md5"
+              cp "$FILE_PATH" "$LATEST_DIR/$FILENAME"
+              cp "$CHECKSUM_PATH" "$LATEST_DIR/$FILENAME.md5"
           done
 
           # SFTP upload
