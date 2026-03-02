@@ -526,7 +526,7 @@ func (ds *dStream) parseOneHeader(s string) (err error) {
 	}
 	// Header name.
 	n = strings.TrimSpace(n)
-	// Value, could be quoted or not quoted, usefull for CHALLENGE since it could contain quotes as value.
+	// Value, could be quoted or not quoted, useful for CHALLENGE since it could contain quotes as value.
 	qv := strings.TrimSpace(v)
 	// Unquoted value.
 	v = unquote(qv)

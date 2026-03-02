@@ -163,7 +163,7 @@ func consistantMVDMessage(b []byte, isElapsedTime bool) (done bool, discard int,
 	)
 
 	switch messageType {
-	case mvdMsgSet: // dem_set is something really dated, it used in old MVD demos, should not be in TCP stream nowdays (unless streaming old file).
+	case mvdMsgSet: // dem_set is something really dated, it used in old MVD demos, should not be in TCP stream nowadays (unless streaming old file).
 		length = 10
 
 		if len(b) < length {
@@ -352,7 +352,7 @@ func (us *uStream) parseMVDMessage(b []byte, demoSpeed float64, isLowLatency boo
 	)
 
 	switch messageType {
-	case mvdMsgSet: // mvdMsgSet is something really dated, it used in old MVD demos, should not be in TCP stream nowdays (unless streaming old file).
+	case mvdMsgSet: // mvdMsgSet is something really dated, it used in old MVD demos, should not be in TCP stream nowadays (unless streaming old file).
 		length = 10
 
 		if len(b) < length {

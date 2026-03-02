@@ -815,7 +815,7 @@ func (us *uStream) downstreamInputNotify(dsId dStreamId) {
 
 // Tell downstreams to reconnect by reseting state to needInitialData_dStreamState.
 // That happens on map change so clients could download required data.
-// forceAll is used when we want to set state for ALL downstreams, that usefull when upstream disconnected.
+// forceAll is used when we want to set state for ALL downstreams, that useful when upstream disconnected.
 func (us *uStream) forceReconnectLinkedDownstreams(forceAll bool) {
 	us.mu.Lock()
 	defer us.mu.Unlock()
@@ -1203,7 +1203,7 @@ func (us *uStream) parseOneHeader(s string) (err error) {
 	}
 	// Header name.
 	n = strings.TrimSpace(n)
-	// Value, could be quoted or not quoted, usefull for CHALLENGE since it could contain quotes as value.
+	// Value, could be quoted or not quoted, useful for CHALLENGE since it could contain quotes as value.
 	qv := strings.TrimSpace(v)
 	// Unquoted value.
 	v = unquote(qv)
