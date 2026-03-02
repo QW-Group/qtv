@@ -40,10 +40,10 @@ docker run --rm -v "$PWD":/qtv -w /qtv -e GOOS=windows golang:latest make
 ```
 
 ## Configuring
-Configuration explained in [qtv.cfg](qtv/qtv.cfg), that file executed by default.
+Configuration explained in [qtv.cfg](resources/qtv.cfg), that file executed by default.
 
 ## Command line
-Everything is configured with config file [qtv.cfg](qtv/qtv.cfg).
+Everything is configured with config file [qtv.cfg](resources/qtv.cfg).
 There is no useful command line switches.
 
 Unlike traditional quake engines if you wish to pass commands
