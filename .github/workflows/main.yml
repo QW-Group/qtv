@@ -13,6 +13,7 @@ jobs:
   build:
     name: build (${{ matrix.os }}-${{ matrix.arch }})
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
@@ -59,6 +60,9 @@ jobs:
   upload:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.repository == 'vikpe/qtv'
+    # if: github.repository == 'QW-Group/qtv' && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'release')
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -68,48 +72,57 @@ jobs:
         with:
           path: build
 
+      - name: Setup SSH
+        env:
+          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+        shell: bash
+        run: |
+          ssh-agent -a ${SSH_AUTH_SOCK} > /dev/null
+          ssh-add - <<< "${{ secrets.SSH_PRIVATE_KEY }}"
+
       - name: Deploy
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
         run: |
+          # Determine type (release or snapshot)
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            WORK_DIR="releases"
+            UPLOAD_DIR="releases"
+            VERSION_BASE_DIR=${UPLOAD_DIR}/${GITHUB_REF_NAME}   # upload/releases/v1.2.3/linux/amd64
+            VERSION_FILENAME_PREFIX=""
           else
-            WORK_DIR="snapshots"
+            UPLOAD_DIR="snapshots"
+            VERSION_BASE_DIR=${UPLOAD_DIR}
+            VERSION_FILENAME_PREFIX="$(TZ='Europe/Amsterdam' date '+%Y%m%d-%H%M%S')_${GITHUB_SHA:0:7}_" # 20260302-211855_cb79d6b_
           fi
 
+          # Process each qtv file in build/
           for DIR_PATH in build/qtv-*; do
             FILE_PATH=$(find "${DIR_PATH}" -maxdepth 1 -type f -name "qtv*" | head -n1)
             FILENAME=$(basename "${FILE_PATH}")    # qtv or qtv.exe
             DIR_NAME=$(basename "${DIR_PATH}")     # qtv-linux-amd64
-            TARGET="${DIR_NAME#qtv-}"             # linux-amd64
-            OS="${TARGET%-*}"                     # linux
-            ARCH="${TARGET##*-}"                  # amd64
+            TARGET="${DIR_NAME#qtv-}"              # linux-amd64
+            OS="${TARGET%-*}"                      # linux
+            ARCH="${TARGET##*-}"                   # amd64
 
-            # copy to latest
-            mkdir -p ${WORK_DIR}/latest/${OS}/${ARCH}
-            cp ${FILE_PATH} ${WORK_DIR}/latest/${OS}/${ARCH}
+            # Latest
+            mkdir -p ${UPLOAD_DIR}/latest/${OS}/${ARCH}
+            cp ${FILE_PATH} ${UPLOAD_DIR}/latest/${OS}/${ARCH}
 
-            # copy to versioned dir/file
-            if [[ "$WORK_DIR" == "releases" ]]; then
-              VERSION_DIR=${WORK_DIR}/${GITHUB_REF_NAME}/${OS}/${ARCH}
-              VERSION_FILENAME=${FILENAME}
-            else
-              PREFIX="$(TZ='Europe/Amsterdam' date '+%Y%m%d-%H%M%S')_${GITHUB_SHA:0:7}" # 20260302-211855_cb79d6b
-              VERSION_DIR=${WORK_DIR}/${OS}/${ARCH}
-              VERSION_FILENAME=${PREFIX}_${FILENAME}
-            fi
-
+            # Versioned
+            # - for a release:  upload/releases/v1.2.3/linux/amd64/qtv
+            # - for a snapshot: upload/snapshots/linux/amd64/20260302-211855_cb79d6b_qtv
+            VERSION_DIR=${VERSION_BASE_DIR}/${OS}/${ARCH}
             mkdir -p ${VERSION_DIR}
-            cp ${FILE_PATH} ${VERSION_DIR}/${VERSION_FILENAME}
+            cp ${FILE_PATH} ${VERSION_DIR}/${VERSION_FILENAME_PREFIX}${VERSION_FILENAME}
           done
 
-          # Generate md5 checksums
-          find "$WORK_DIR" -type f -name "*qtv*" | while read -r FILE; do
+          # Generate checksums
+          find "$UPLOAD_DIR" -type f -name "*qtv*" | while read -r FILE; do
             md5sum "$FILE" | awk '{print $1}' > "$FILE.md5"
           done
 
-          echo "Files in WORK_DIR:"
-          tree "${WORK_DIR}"
+          echo "Files in UPLOAD_DIR:"
+          tree "${UPLOAD_DIR}"
 
-          # sftp -rp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "${{ secrets.SFTP_PORT }}" "${{ secrets.SFTP_USERNAME }}"@"${{ secrets.SFTP_HOST }}" <<< $"put -rp ${WORK_DIR}/* /"
+          # Upload
+          # sftp -rp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "${{ secrets.SFTP_PORT }}" "${{ secrets.SFTP_USERNAME }}"@"${{ secrets.SFTP_HOST }}" <<< $"put -rp ${UPLOAD_DIR}/* /${UPLOAD_DIR}"
