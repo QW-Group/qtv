@@ -11,44 +11,24 @@ on:
 
 jobs:
   build:
+    name: build (${{ matrix.os }}-${{ matrix.arch }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        target:
-          [
-            freebsd-amd64,
-            linux-amd64,
-            linux-arm,
-            linux-arm64,
-            openbsd-amd64,
-            windows-x64,
-          ]
         include:
-          - target: freebsd-amd64
-            os: freebsd
+          - os: freebsd
             arch: amd64
-            ext: ""
-          - target: linux-amd64
-            os: linux
+          - os: linux
             arch: amd64
-            ext: ""
-          - target: linux-arm64
-            os: linux
+          - os: linux
             arch: arm64
-            ext: ""
-          - target: linux-arm
-            os: linux
+          - os: linux
             arch: arm
-            ext: ""
-          - target: openbsd-amd64
-            os: openbsd
+          - os: openbsd
             arch: amd64
-            ext: ""
-          - target: windows-x64
-            os: windows
+          - os: windows
             arch: amd64
-            ext: ".exe"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -64,14 +44,15 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 0
         run: |
-          mkdir -p build/${{ matrix.target }}
-          go build -ldflags "-s -w" -o build/${{ matrix.target }}/ ./...
+          OUTPUT_DIR="build/${{ matrix.os }}/${{ matrix.arch }}"
+          mkdir -p ${OUTPUT_DIR}
+          go build -ldflags "-s -w" -o ${OUTPUT_DIR} ./...
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: qtv-${{ matrix.target }}
-          path: build/${{ matrix.target }}/qtv*
+          name: qtv-${{ matrix.os }}-${{ matrix.arch }}
+          path: build/${{ matrix.os }}/${{ matrix.arch }}/qtv*
           compression-level: 9
           retention-days: 3
 
@@ -91,56 +72,41 @@ jobs:
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
         run: |
-          IS_RELEASE=false
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-              IS_RELEASE=true
-          fi
-
-          if $IS_RELEASE; then
-              LOCAL_BASE_DIR="upload/releases"
-              REMOTE_BASE_DIR="/releases"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            WORK_DIR="releases"
           else
-              LOCAL_BASE_DIR="upload/snapshots"
-              REMOTE_BASE_DIR="/snapshots"
+            WORK_DIR="snapshots"
           fi
 
-          for DIR_PATH in build/qtv-*; do
-              FILE_PATH=$(find "${DIR_PATH}" -maxdepth 1 -type f -name "qtv*" | head -n1)
-              FILENAME=$(basename "${FILE_PATH}")    # qtv or qtv.exe
+          # Populate versioned dirs/files
+          mkdir -p ${WORK_DIR}/latest
 
-              DIR_NAME=$(basename "${DIR_PATH}")     # qtv-linux-amd64
-              OS_ARCH="${DIR_NAME#qtv-}"             # linux-amd64
-              OS="${OS_ARCH%-*}"                     # linux
-              ARCH="${OS_ARCH##*-}"                  # amd64
+          if [[ "$WORK_DIR" == "releases" ]]; then
+            VERSION_DIR=${WORK_DIR}/${GITHUB_REF_NAME}
+            mkdir -p ${VERSION_DIR}
+            cp -r build/* ${VERSION_DIR}   # uploads/releases/x.y.z/**/*
+          else
+            cp -r build/* ${WORK_DIR}
 
-              CHECKSUM_PATH="${FILE_PATH}.md5"
-              md5sum "${FILE_PATH}" > "${CHECKSUM_PATH}"
+            # prepend each filename with snapshot details
+            PREFIX="$(TZ='Europe/Amsterdam' date '+%Y%m%d-%H%M%S')_${GITHUB_SHA:0:7}" # 20260302-211855_cb79d6b
 
-              if $IS_RELEASE; then
-                  VERSION_DIR="${LOCAL_BASE_DIR}/${GITHUB_REF_NAME}/${OS}/${ARCH}"
-              else
-                  VERSION_DIR="${LOCAL_BASE_DIR}/${OS}/${ARCH}"
-              fi
+            find "$WORK_DIR" -type f -name "qtv*" | while read -r FILE_PATH; do
+              DIR=$(dirname "$FILE_PATH")
+              FILENAME=$(basename "$FILE_PATH")
+              mv "$FILE_PATH" "${DIR}/${PREFIX}_${FILENAME}"
+            done
+          fi
 
-              LATEST_DIR="${LOCAL_BASE_DIR}/latest/${OS}/${ARCH}"
+          # Populate latest
+          mv build/* ${WORK_DIR}/latest
 
-              mkdir -p "${VERSION_DIR}" "${LATEST_DIR}"
-
-              if $IS_RELEASE; then
-                  cp "${FILE_PATH}" "${VERSION_DIR}/${FILENAME}"
-                  cp "${CHECKSUM_PATH}" "${VERSION_DIR}/${FILENAME}.md5"
-              else
-                  TIMESTAMP=$(TZ='Europe/Amsterdam' date '+%Y%m%d-%H%M%S')
-                  SNAPSHOT_NAME="${TIMESTAMP}_${GITHUB_SHA::7}_${FILENAME}"
-                  cp "${FILE_PATH}" "${VERSION_DIR}/${SNAPSHOT_NAME}"
-                  cp "${CHECKSUM_PATH}" "${VERSION_DIR}/${SNAPSHOT_NAME}.md5"
-              fi
-
-              cp "${FILE_PATH}" "${LATEST_DIR}/${FILENAME}"
-              cp "${CHECKSUM_PATH}" "${LATEST_DIR}/${FILENAME}.md5"
+          # Generate md5 checksums
+          find "$WORK_DIR" -type f -name "qtv*" | while read -r FILE; do
+            md5sum "$FILE" | awk '{print $1}' > "$FILE.md5"
           done
 
-          echo "Files to upload:"
-          tree "${LOCAL_BASE_DIR}"
+          echo "Files in WORK_DIR:"
+          tree "${WORK_DIR}"
 
-          # sftp -rp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "${{ secrets.SFTP_PORT }}" "${{ secrets.SFTP_USERNAME }}"@"${{ secrets.SFTP_HOST }}" <<< $"put -rp ${LOCAL_BASE_DIR}/* ${REMOTE_BASE_DIR}"
+          # sftp -rp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "${{ secrets.SFTP_PORT }}" "${{ secrets.SFTP_USERNAME }}"@"${{ secrets.SFTP_HOST }}" <<< $"put -rp ${WORK_DIR}/* /"
