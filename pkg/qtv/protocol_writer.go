@@ -448,7 +448,7 @@ func (qp *qProtocol) sendPlaybackDelay(ds *dStream, delay byte) error {
 	return ds.sendMVDMessageEx(msg, mvdMsgAll, playersMaskAll, 0, delay)
 }
 
-func (qp *qProtocol) putStuffTextf(msg *netMsgW, format string, a ...interface{}) {
+func (qp *qProtocol) putStuffTextf(msg *netMsgW, format string, a ...any) {
 	if format == "" {
 		return
 	}
@@ -456,7 +456,7 @@ func (qp *qProtocol) putStuffTextf(msg *netMsgW, format string, a ...interface{}
 	msg.PutStringf(format, a...)
 }
 
-func (qp *qProtocol) sendStuffTextf(ds *dStream, format string, a ...interface{}) error {
+func (qp *qProtocol) sendStuffTextf(ds *dStream, format string, a ...any) error {
 	msg := qp.w.Clear()
 
 	qp.putStuffTextf(msg, format, a...)
@@ -572,7 +572,7 @@ func (qp *qProtocol) sendPlayers(ds *dStream) error {
 	return ds.sendMVDMessage(msg, mvdMsgRead, playersMaskAll)
 }
 
-func (qp *qProtocol) putSvcPrintf(msg *netMsgW, level printLevel, format string, a ...interface{}) {
+func (qp *qProtocol) putSvcPrintf(msg *netMsgW, level printLevel, format string, a ...any) {
 	msg.PutSVC(svc_print)
 	msg.PutByte(byte(level))
 	msg.PutStringf(format, a...)

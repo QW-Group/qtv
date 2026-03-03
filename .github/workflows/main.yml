@@ -2,9 +2,8 @@ name: main
 
 on:
   push:
-    # Only build branches on push, tags will be handled by 'release' job.
     branches:
-    - '**'
+      - "**"
   pull_request:
   workflow_dispatch:
   release:
@@ -12,44 +11,33 @@ on:
 
 jobs:
   build:
+    name: build (${{ matrix.os }}-${{ matrix.arch }})
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
-       target: [linux-amd64, linux-arm64, linux-arm, freebsd-amd64, openbsd-amd64, windows-x64]
-       include:
-         - target: linux-amd64
-           os: linux
-           arch: amd64
-           ext: ""
-         - target: linux-arm64
-           os: linux
-           arch: arm64
-           ext: ""
-         - target: linux-arm
-           os: linux
-           arch: arm
-           ext: ""
-         - target: freebsd-amd64
-           os: freebsd
-           arch: amd64
-           ext: ""
-         - target: openbsd-amd64
-           os: openbsd
-           arch: amd64
-           ext: ""
-         - target: windows-x64
-           os: windows
-           arch: amd64
-           ext: ".exe"
+        include:
+          - os: freebsd
+            arch: amd64
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: linux
+            arch: arm
+          - os: openbsd
+            arch: amd64
+          - os: windows
+            arch: amd64
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Prepare Build Environment
         uses: actions/setup-go@v6
         with:
-          go-version: "1.24.x"
+          go-version: "1.26.x"
 
       - name: Build
         env:
@@ -57,66 +45,98 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 0
         run: |
-          mkdir -p build/${{ matrix.target }}
-          go build -ldflags "-s -w" -o build/${{ matrix.target }}/ ./...
+          OUTPUT_DIR="build/${{ matrix.os }}/${{ matrix.arch }}"
+          mkdir -p ${OUTPUT_DIR}
+          go build -ldflags "-s -w" -o ${OUTPUT_DIR} ./...
 
-      - name: Create checksum
-        run: |
-             md5sum build/${{ matrix.target }}/qtv${{ matrix.ext }} > build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5
-
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v6
         with:
-          name: qtv-${{ matrix.target }}
-          path: |
-            qtv.*
+          name: qtv-${{ matrix.os }}-${{ matrix.arch }}
+          path: build/${{ matrix.os }}/${{ matrix.arch }}/qtv*
           compression-level: 9
+          retention-days: 3
 
   upload:
-    needs: build
-    timeout-minutes: 10
-    runs-on: ubuntu-latest
     if: github.repository == 'QW-Group/qtv' && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'release')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          path: qtv
+        uses: actions/checkout@v6
 
-      - name: Download Artifacts
-        uses: actions/download-artifact@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
 
       - name: Setup SSH
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
         shell: bash
         run: |
-          ssh-agent -a $SSH_AUTH_SOCK > /dev/null
+          ssh-agent -a ${SSH_AUTH_SOCK} > /dev/null
           ssh-add - <<< "${{ secrets.SSH_PRIVATE_KEY }}"
 
-      - name: Set date
+      - name: Get release date
         run: |
-          echo "DATE=$(TZ="Europe/Amsterdam" date "+%Y%m%d-%H%M%S")" >> $GITHUB_ENV
+          REF_NAME="${{ github.ref_name || github.event.release.tag_name }}"
+          RELEASE_DATE=$(git log -1 --format=%cI "$REF_NAME")
+          echo "RELEASE_DATE=$RELEASE_DATE" >> $GITHUB_ENV
 
-      - name: Deploy
+      - name: Upload to builds.quakeworld.nu
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
-        shell: bash
         run: |
+          # Build file structure for uploading
+          # snapshots:
+          #  upload/snapshots/latest/$os/$arch/$filename
+          #  upload/snapshots/$os/$arch/$prefix_$filename
+          # releases:
+          #  upload/releases/latest/$os/$arch/$filename
+          #  upload/releases/$tag/$os/$arch/$filename
+
+          set -e
+
+          upload_dir="${GITHUB_WORKSPACE}/upload"
           if [[ $GITHUB_REF == refs/tags/* ]]; then
-             mkdir -p upload/releases/${{ github.ref_name }}/${{ matrix.os }}/${{ matrix.arch }}
-             mkdir -p upload/releases/latest/${{ matrix.os }}/${{ matrix.arch }}
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/releases/${{ github.ref_name }}/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}
-             cp build/${{ matrix.target }}/qtv{{ matrix.ext }}.md5 upload/releases/${{ github.ref_name }}/${{ matrix.os }}/${{ matrix.arch }}/qtv{{ matrix.ext }}.md5
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/releases/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}
-             cp build/${{ matrix.target }}/qtv{{ matrix.ext }}.md5 upload/releases/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv{{ matrix.ext }}.md5
-             sftp -rp -o 'StrictHostKeyChecking no' -o 'UserKnownHostsFile /dev/null' -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/releases <<< $'put -rp upload/releases/*'
+            main_dir="${upload_dir}/releases/${{ github.ref_name }}"
+            latest_dir="${upload_dir}/releases/latest"
+            prefix=""
+            upload_prefix="releases"
           else
-             mkdir -p upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}
-             mkdir -p upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}/${{ env.DATE }}_${GITHUB_SHA::7}_qtv${{ matrix.ext }}
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5 upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}/${{ env.DATE }}_${GITHUB_SHA::7}_qtv${{ matrix.ext }}.md5
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5 upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}.md5
-             sftp -rp -o 'StrictHostKeyChecking no' -o 'UserKnownHostsFile /dev/null' -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/snapshots <<< $'put -rp upload/snapshots/*'
+            main_dir="${upload_dir}/snapshots"
+            latest_dir="${upload_dir}/snapshots/latest"
+            date=$(TZ="Europe/Amsterdam" date "+%Y%m%d-%H%M%S")
+            prefix="${date}_${GITHUB_SHA::7}_"
+            upload_prefix="snapshots"
           fi
+
+          # Collect upload structure
+          for artifact in artifacts/*/*; do
+            artifact_file=$(basename "${artifact}")
+            artifact_dir=$(dirname "${artifact}")
+            IFS='-' read -r ezq os arch <<< "${artifact_dir}"
+
+            mkdir -p "${main_dir}/${os}/${arch}" "${latest_dir}/${os}/${arch}"
+            cp "${artifact}" "${main_dir}/${os}/${arch}/${prefix}${artifact_file}"
+            cp "${artifact}" "${latest_dir}/${os}/${arch}/${artifact_file}"
+          done
+
+          # Set executable bit for all files
+          find "${upload_dir}" -type f -exec chmod 755 {} +
+
+          # Generate checksums
+          for file in $(find "$upload_dir" -type f -name "qtv*"); do
+            md5sum "$file" | cut -d' ' -f1 > "${file}.md5"
+          done
+
+          # Reset timestamp to time of commit
+          find "${upload_dir}" -type f -exec touch --date="${RELEASE_DATE}" {} +
+
+          echo "Upload artifacts:"
+          tree ${upload_dir}
+
+          # Upload
+          sftp -rp -o 'StrictHostKeyChecking no' -o 'UserKnownHostsFile /dev/null' -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/${upload_prefix} <<< $'put -rp ${upload_dir}/*'

@@ -34,7 +34,7 @@ type uStreamStorage struct {
 	// This channel used for communication with uStream.
 	// uStream notify storage with id when it wants to stop, so we can find uStream and remove reference from internal containers.
 	// Also uStream periodically send us info which we use later inside udp/http modules, this way we significantly simplify concurency handling.
-	notifyCh chan interface{}
+	notifyCh chan any
 	// Parent object.
 	qtv *QTV
 }
@@ -46,7 +46,7 @@ func newUStreamStorage(qtv *QTV) *uStreamStorage {
 		streamInfo: map[uStreamId]*uStreamInfo{},
 		qtv:        qtv,
 		ids:        pools.NewIDPool(0),
-		notifyCh:   make(chan interface{}, qtvMaxClients),
+		notifyCh:   make(chan any, qtvMaxClients),
 	}
 	uss.regCommands(qtv)
 	uss.regVars(qtv)

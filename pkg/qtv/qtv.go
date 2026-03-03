@@ -273,14 +273,14 @@ func (qtv *QTV) demoListUpdater() (err error) {
 }
 
 var (
-	// Sensitive file extentions not allowed to be downloaded, both for normal QW protocol and HTTP.
+	// Sensitive file extensions not allowed to be downloaded, both for normal QW protocol and HTTP.
 	sensitiveDataExtensions = map[string]bool{
 		".cfg": true,
 		".key": true,
 	}
 
 	// Allowed file extensions for demos for download and listing. (HTTP could show more)
-	demosAllowedExtentions = map[string]bool{
+	demosAllowedExtensions = map[string]bool{
 		".mvd": true,
 		".gz":  true,
 		".zip": true,
@@ -295,7 +295,7 @@ func fileNameHasSensitiveExtension(name string) bool {
 
 func demoNameHasValidExtension(name string) bool {
 	ext := filepath.Ext(name)
-	return demosAllowedExtentions[ext]
+	return demosAllowedExtensions[ext]
 }
 
 func (qtv *QTV) updateDemoList() error {
@@ -506,11 +506,9 @@ func (qtv *QTV) ListenAndServe() (err error) {
 	g.Go(func() error { return qtv.mainLoop() })
 	g.Go(func() error { return mux.Serve() })
 
-	select {
-	case <-qtv.ctx.Done():
-		mux.Close()
-		qtv.udpSv.close() // We have defer with close above but this will speed up things.
-	}
+	<-qtv.ctx.Done()
+	mux.Close()
+	qtv.udpSv.close() // We have defer with close above but this will speed up things.
 
 	return g.Wait()
 }

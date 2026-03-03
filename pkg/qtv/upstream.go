@@ -56,7 +56,7 @@ type uStream struct {
 	io                  uStreamIO                 // Wrapper around IO so we can use TCP or file in some abstract way.
 	ioError             bool                      // True if IO error detected.
 	ioECh               chan error                // This channel used for receiving IO errors from ioReader/ioWriter goroutines.
-	ussNotifyCh         chan<- interface{}        // Send id there when we about to quit so uStreamStorage will do clean up.
+	ussNotifyCh         chan<- any                // Send id there when we about to quit so uStreamStorage will do clean up.
 	reconnectDelay      time.Duration             // Delay between connections.
 	parseTime           uint64                    // Time in milliseconds since we started parsing MVD stream, increased each time we successfully parsed MVD message.
 	curTime             uint64                    // Current QTV time in milliseconds.
@@ -72,7 +72,7 @@ type uStream struct {
 }
 
 // Allocates new upstream.
-func newUStream(qtv *QTV, ussNotifyCh chan<- interface{}, server string, ussName string, usId uStreamId, options uStreamOptions) (us *uStream, err error) {
+func newUStream(qtv *QTV, ussNotifyCh chan<- any, server string, ussName string, usId uStreamId, options uStreamOptions) (us *uStream, err error) {
 	defer func() { err = multierror.Prefix(err, "newUStream:") }()
 
 	if server == "" {
@@ -436,7 +436,7 @@ func (us *uStream) send(bs ...[]byte) (err error) {
 }
 
 // Send data to upstream.
-func (us *uStream) sendPrint(a ...interface{}) (err error) {
+func (us *uStream) sendPrint(a ...any) (err error) {
 	defer func() { err = multierror.Prefix(err, "uStream.sendPrint:") }()
 
 	s := fmt.Sprint(a...)
@@ -444,7 +444,7 @@ func (us *uStream) sendPrint(a ...interface{}) (err error) {
 }
 
 // Send data to upstream.
-func (us *uStream) sendPrintf(format string, a ...interface{}) (err error) {
+func (us *uStream) sendPrintf(format string, a ...any) (err error) {
 	defer func() { err = multierror.Prefix(err, "uStream.sendPrintf:") }()
 
 	s := fmt.Sprintf(format, a...)
@@ -495,7 +495,7 @@ func (us *uStream) sendNetMsg(msg *netMsgW) (err error) {
 }
 
 // Send clcStringCmd data to upstream.
-func (us *uStream) sendClcStringCmdf(format string, a ...interface{}) (err error) {
+func (us *uStream) sendClcStringCmdf(format string, a ...any) (err error) {
 	defer func() { err = multierror.Prefix(err, "uStream.sendClcStringCmdf:") }()
 
 	if us.getState() < usParsingConnection {
@@ -815,7 +815,7 @@ func (us *uStream) downstreamInputNotify(dsId dStreamId) {
 
 // Tell downstreams to reconnect by reseting state to needInitialData_dStreamState.
 // That happens on map change so clients could download required data.
-// forceAll is used when we want to set state for ALL downstreams, that usefull when upstream disconnected.
+// forceAll is used when we want to set state for ALL downstreams, that useful when upstream disconnected.
 func (us *uStream) forceReconnectLinkedDownstreams(forceAll bool) {
 	us.mu.Lock()
 	defer us.mu.Unlock()
@@ -1203,7 +1203,7 @@ func (us *uStream) parseOneHeader(s string) (err error) {
 	}
 	// Header name.
 	n = strings.TrimSpace(n)
-	// Value, could be quoted or not quoted, usefull for CHALLENGE since it could contain quotes as value.
+	// Value, could be quoted or not quoted, useful for CHALLENGE since it could contain quotes as value.
 	qv := strings.TrimSpace(v)
 	// Unquoted value.
 	v = unquote(qv)
@@ -1260,7 +1260,7 @@ func (us *uStream) sendUserListUpdateToUpstream(ds *dStream, action qtvUserListA
 	defer func() { err = multierror.Prefix(err, "uStream.sendUserListUpdateToUpstream:") }()
 
 	s := ds.userListActionToString(action, false)
-	if err := us.sendClcStringCmdf(s); err != nil {
+	if err := us.sendClcStringCmdf("%s", s); err != nil {
 		if getUStreamSendNetMsgError(err) == nil {
 			err = nil // Ignore minor errors.
 		}

@@ -107,14 +107,14 @@ func (info *Info) set(name string, value string) error {
 }
 
 // Set info string value for key name.
-func (info *Info) Set(name string, a ...interface{}) error {
+func (info *Info) Set(name string, a ...any) error {
 	v := fmt.Sprint(a...)
 	err := info.set(name, v)
 	return multierror.Prefix(err, "Info.Set:")
 }
 
 // Set info string value for key name.
-func (info *Info) Setf(name string, format string, a ...interface{}) error {
+func (info *Info) Setf(name string, format string, a ...any) error {
 	v := fmt.Sprintf(format, a...)
 	err := info.set(name, v)
 	return multierror.Prefix(err, "Info.Setf:")

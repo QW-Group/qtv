@@ -215,25 +215,25 @@ func (ds *dStream) qtvHeader() string {
 }
 
 // Send error reply to downstream (flush output buffer and close connection).
-func (ds *dStream) sendError(format string, a ...interface{}) (err error) {
+func (ds *dStream) sendError(format string, a ...any) (err error) {
 	defer func() { err = multierror.Prefix(err, "dStream.sendError:") }()
 	return ds.sendReplyEx(true, time.Now().Add(100*time.Millisecond), "ERROR: "+format, a...)
 }
 
 // Send error reply to downstream (flush output buffer and close connection).
-func (ds *dStream) sendPermanentError(format string, a ...interface{}) (err error) {
+func (ds *dStream) sendPermanentError(format string, a ...any) (err error) {
 	defer func() { err = multierror.Prefix(err, "dStream.sendPermanentError:") }()
 	return ds.sendReplyEx(true, time.Now().Add(100*time.Millisecond), "PERROR: "+format, a...)
 }
 
 // Send reply to downstream (flush output buffer and close connection).
-func (ds *dStream) sendLastReply(format string, a ...interface{}) (err error) {
+func (ds *dStream) sendLastReply(format string, a ...any) (err error) {
 	defer func() { err = multierror.Prefix(err, "dStream.sendLastReply:") }()
 	return ds.sendReplyEx(true, time.Now().Add(5*time.Second), format, a...)
 }
 
 // Send reply to downstream (to NOT close connection).
-func (ds *dStream) sendReply(format string, a ...interface{}) (err error) {
+func (ds *dStream) sendReply(format string, a ...any) (err error) {
 	defer func() { err = multierror.Prefix(err, "dStream.sendReply:") }()
 
 	return ds.sendReplyEx(false, time.Now().Add(5*time.Second), format, a...)
@@ -262,7 +262,7 @@ func (ds *dStream) sendReplyCommon(flushAndExit bool, deadLine time.Time) (err e
 }
 
 // Base reply method for downstream.
-func (ds *dStream) sendReplyEx(flushAndExit bool, deadLine time.Time, format string, a ...interface{}) (err error) {
+func (ds *dStream) sendReplyEx(flushAndExit bool, deadLine time.Time, format string, a ...any) (err error) {
 	defer func() { err = multierror.Prefix(err, "dStream.sendReplyEx:") }()
 
 	if err := ds.sendReplyCommon(flushAndExit, deadLine); err != nil {
@@ -526,7 +526,7 @@ func (ds *dStream) parseOneHeader(s string) (err error) {
 	}
 	// Header name.
 	n = strings.TrimSpace(n)
-	// Value, could be quoted or not quoted, usefull for CHALLENGE since it could contain quotes as value.
+	// Value, could be quoted or not quoted, useful for CHALLENGE since it could contain quotes as value.
 	qv := strings.TrimSpace(v)
 	// Unquoted value.
 	v = unquote(qv)

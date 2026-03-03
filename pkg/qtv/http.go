@@ -344,14 +344,14 @@ func (sv *httpSv) uploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Add some limitations for upload so it not so easy to abuse it.
-	if !sv.upload.CAS(false, true) {
+	if !sv.upload.CompareAndSwap(false, true) {
 		w.WriteHeader(http.StatusForbidden)
 		fmt.Fprintf(w, "Only one upload allowed simultaneously\n")
 		return
 	}
-	defer func() { sv.upload.CAS(true, false) }()
+	defer func() { sv.upload.CompareAndSwap(true, false) }()
 
-	if time.Now().Sub(sv.lastUpload) < 1*time.Minute {
+	if time.Since(sv.lastUpload) < 1*time.Minute {
 		w.WriteHeader(http.StatusForbidden)
 		fmt.Fprintf(w, "Only one upload allowed per minute\n")
 		return

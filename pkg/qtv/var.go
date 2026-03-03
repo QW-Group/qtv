@@ -122,7 +122,7 @@ func (qs *qVarStorage) Set(name string, value string) {
 }
 
 // Setf sets new value for variable.
-func (qs *qVarStorage) Setf(name string, format string, a ...interface{}) {
+func (qs *qVarStorage) Setf(name string, format string, a ...any) {
 	qs.Set(name, fmt.Sprintf(format, a...))
 }
 
@@ -186,7 +186,7 @@ func (qs *qVarStorage) set(name string, newValue *qVar, keepCurOnChange bool, ke
 }
 
 // Register variable.
-func (qs *qVarStorage) RegEx(name string, value interface{}, flags qVarFlags, OnChange qVarOnChange) {
+func (qs *qVarStorage) RegEx(name string, value any, flags qVarFlags, OnChange qVarOnChange) {
 	qv := qs.Find(name)
 	if qv != nil {
 		log.Panic().Str("ctx", "qVarStorage").Msgf("variable %q already registered", name)
@@ -204,7 +204,7 @@ func (qs *qVarStorage) Reg(name string, value string) {
 }
 
 // Register variable.
-func (qs *qVarStorage) Regf(name string, format string, a ...interface{}) {
+func (qs *qVarStorage) Regf(name string, format string, a ...any) {
 	qs.Reg(name, fmt.Sprintf(format, a...))
 }
 
