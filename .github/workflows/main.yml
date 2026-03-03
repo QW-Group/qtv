@@ -11,6 +11,7 @@ on:
 
 jobs:
   build:
+    if: github.repository == 'vikpe/qtv'
     name: build (${{ matrix.os }}-${{ matrix.arch }})
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -58,10 +59,10 @@ jobs:
           retention-days: 3
 
   upload:
+    if: github.repository == 'vikpe/qtv'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.repository == 'vikpe/qtv'
     # if: github.repository == 'QW-Group/qtv' && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'release')
     steps:
       - name: Checkout
@@ -72,13 +73,13 @@ jobs:
         with:
           path: build
 
-      - name: Setup SSH
-        env:
-          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
-        shell: bash
-        run: |
-          ssh-agent -a ${SSH_AUTH_SOCK} > /dev/null
-          ssh-add - <<< "${{ secrets.SSH_PRIVATE_KEY }}"
+      # - name: Setup SSH
+      #   env:
+      #     SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+      #   shell: bash
+      #   run: |
+      #     ssh-agent -a ${SSH_AUTH_SOCK} > /dev/null
+      #     ssh-add - <<< "${{ secrets.SSH_PRIVATE_KEY }}"
 
       - name: Deploy
         env:
