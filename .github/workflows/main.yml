@@ -142,7 +142,7 @@ jobs:
           find "${upload_dir}" -type f -exec touch --date="${RELEASE_DATE}" {} +
 
           echo "Upload artifacts:"
-          ls -lR "${upload_dir}"
+          tree ${upload_dir}
 
           # Upload
           # sftp -rp -o 'StrictHostKeyChecking no' -o 'UserKnownHostsFile /dev/null' -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/${upload_prefix} <<< $'put -rp upload/${upload_prefix}/*'
