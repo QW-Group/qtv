@@ -11,7 +11,6 @@ on:
 
 jobs:
   build:
-    if: github.repository == 'vikpe/qtv'
     name: build (${{ matrix.os }}-${{ matrix.arch }})
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -59,11 +58,10 @@ jobs:
           retention-days: 3
 
   upload:
-    if: github.repository == 'vikpe/qtv'
+    if: github.repository == 'QW-Group/qtv' && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'release')
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # if: github.repository == 'QW-Group/qtv' && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'release')
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -73,13 +71,13 @@ jobs:
         with:
           path: artifacts
 
-      # - name: Setup SSH
-      #   env:
-      #     SSH_AUTH_SOCK: /tmp/ssh_agent.sock
-      #   shell: bash
-      #   run: |
-      #     ssh-agent -a ${SSH_AUTH_SOCK} > /dev/null
-      #     ssh-add - <<< "${{ secrets.SSH_PRIVATE_KEY }}"
+      - name: Setup SSH
+        env:
+          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+        shell: bash
+        run: |
+          ssh-agent -a ${SSH_AUTH_SOCK} > /dev/null
+          ssh-add - <<< "${{ secrets.SSH_PRIVATE_KEY }}"
 
       - name: Get release date
         run: |
@@ -119,11 +117,9 @@ jobs:
           for artifact in artifacts/*/*; do
             artifact_file=$(basename "${artifact}")
             artifact_dir=$(dirname "${artifact}")
-
             IFS='-' read -r ezq os arch <<< "${artifact_dir}"
 
             mkdir -p "${main_dir}/${os}/${arch}" "${latest_dir}/${os}/${arch}"
-
             cp "${artifact}" "${main_dir}/${os}/${arch}/${prefix}${artifact_file}"
             cp "${artifact}" "${latest_dir}/${os}/${arch}/${artifact_file}"
           done
@@ -132,10 +128,8 @@ jobs:
           find "${upload_dir}" -type f -exec chmod 755 {} +
 
           # Generate checksums
-          for artifact in $(find "${upload_dir}" -type f); do
-            artifact_file=$(basename "${artifact}")
-            artifact_dir=$(dirname "${artifact}")
-            (cd "${artifact_dir}" && md5sum "${artifact_file}" > "${artifact_file}.md5")
+          for file in $(find "$upload_dir" -type f -name "qtv*"); do
+            md5sum "$file" | cut -d' ' -f1 > "${file}.md5"
           done
 
           # Reset timestamp to time of commit
@@ -145,4 +139,4 @@ jobs:
           tree ${upload_dir}
 
           # Upload
-          # sftp -rp -o 'StrictHostKeyChecking no' -o 'UserKnownHostsFile /dev/null' -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/${upload_prefix} <<< $'put -rp upload/${upload_prefix}/*'
+          sftp -rp -o 'StrictHostKeyChecking no' -o 'UserKnownHostsFile /dev/null' -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/${upload_prefix} <<< $'put -rp ${upload_dir}/*'
