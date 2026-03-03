@@ -51,8 +51,8 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ matrix.os }}-${{ matrix.arch }}
-          path: build/*
+          name: qtv-${{ matrix.os }}-${{ matrix.arch }}
+          path: build/${{ matrix.os }}/${{ matrix.arch }}/qtv*
           compression-level: 9
           retention-days: 3
 
@@ -78,28 +78,31 @@ jobs:
             WORK_DIR="snapshots"
           fi
 
-          # Populate versioned dirs/files
-          mkdir -p ${WORK_DIR}/latest
+          for DIR_PATH in build/qtv-*; do
+            FILE_PATH=$(find "${DIR_PATH}" -maxdepth 1 -type f -name "qtv*" | head -n1)
+            FILENAME=$(basename "${FILE_PATH}")    # qtv or qtv.exe
+            DIR_NAME=$(basename "${DIR_PATH}")     # qtv-linux-amd64
+            TARGET="${DIR_NAME#qtv-}"             # linux-amd64
+            OS="${TARGET%-*}"                     # linux
+            ARCH="${TARGET##*-}"                  # amd64
 
-          if [[ "$WORK_DIR" == "releases" ]]; then
-            VERSION_DIR=${WORK_DIR}/${GITHUB_REF_NAME}
+            # copy to latest
+            mkdir -p ${WORK_DIR}/latest/${OS}/${ARCH}
+            cp ${FILE_PATH} ${WORK_DIR}/latest/${OS}/${ARCH}
+
+            # copy to versioned dir/file
+            if [[ "$WORK_DIR" == "releases" ]]; then
+              VERSION_DIR=${WORK_DIR}/${GITHUB_REF_NAME}/${OS}/${ARCH}
+              VERSION_FILENAME=${FILENAME}
+            else
+              PREFIX="$(TZ='Europe/Amsterdam' date '+%Y%m%d-%H%M%S')_${GITHUB_SHA:0:7}" # 20260302-211855_cb79d6b
+              VERSION_DIR=${WORK_DIR}/${OS}/${ARCH}
+              VERSION_FILENAME=${PREFIX}_${FILENAME}
+            fi
+
             mkdir -p ${VERSION_DIR}
-            cp -r build/* ${VERSION_DIR}   # uploads/releases/x.y.z/**/*
-          else
-            cp -r build/* ${WORK_DIR}
-
-            # prepend each filename with snapshot details
-            PREFIX="$(TZ='Europe/Amsterdam' date '+%Y%m%d-%H%M%S')_${GITHUB_SHA:0:7}" # 20260302-211855_cb79d6b
-
-            find "$WORK_DIR" -type f -name "qtv*" | while read -r FILE_PATH; do
-              DIR=$(dirname "$FILE_PATH")
-              FILENAME=$(basename "$FILE_PATH")
-              mv "$FILE_PATH" "${DIR}/${PREFIX}_${FILENAME}"
-            done
-          fi
-
-          # Populate latest
-          mv build/* ${WORK_DIR}/latest
+            cp ${FILE_PATH} ${VERSION_DIR}/${VERSION_FILENAME}
+          done
 
           # Generate md5 checksums
           find "$WORK_DIR" -type f -name "*qtv*" | while read -r FILE; do
