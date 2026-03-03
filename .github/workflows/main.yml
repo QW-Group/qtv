@@ -50,7 +50,7 @@ jobs:
           mkdir -p ${OUTPUT_DIR}
           go build -ldflags "-s -w" -o ${OUTPUT_DIR} ./...
 
-      - name: Upload build artifacts
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v6
         with:
           name: qtv-${{ matrix.os }}-${{ matrix.arch }}
@@ -68,10 +68,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Download build artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v7
         with:
-          path: build
+          path: artifacts
 
       # - name: Setup SSH
       #   env:
@@ -81,51 +81,68 @@ jobs:
       #     ssh-agent -a ${SSH_AUTH_SOCK} > /dev/null
       #     ssh-add - <<< "${{ secrets.SSH_PRIVATE_KEY }}"
 
-      - name: Deploy
+      - name: Get release date
+        run: |
+          REF_NAME="${{ github.ref_name || github.event.release.tag_name }}"
+          RELEASE_DATE=$(git log -1 --format=%cI "$REF_NAME")
+          echo "RELEASE_DATE=$RELEASE_DATE" >> $GITHUB_ENV
+
+      - name: Upload to builds.quakeworld.nu
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
         run: |
-          # Determine type (release or snapshot)
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            BASE_DIR="releases"
-            VERSION_BASE_DIR=${BASE_DIR}/${GITHUB_REF_NAME}   # releases/v1.2.3/linux/amd64
-            VERSION_FILENAME_PREFIX=""
+          # Build file structure for uploading
+          # snapshots:
+          #  upload/snapshots/latest/$os/$arch/$filename
+          #  upload/snapshots/$os/$arch/$prefix_$filename
+          # releases:
+          #  upload/releases/latest/$os/$arch/$filename
+          #  upload/releases/$tag/$os/$arch/$filename
+
+          set -e
+
+          upload_dir="${GITHUB_WORKSPACE}/upload"
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            main_dir="${upload_dir}/releases/${{ github.ref_name }}"
+            latest_dir="${upload_dir}/releases/latest"
+            prefix=""
+            upload_prefix="releases"
           else
-            BASE_DIR="snapshots"
-            VERSION_BASE_DIR=${BASE_DIR}
-            VERSION_FILENAME_PREFIX="$(TZ='Europe/Amsterdam' date '+%Y%m%d-%H%M%S')_${GITHUB_SHA:0:7}_" # 20260302-211855_cb79d6b_
+            main_dir="${upload_dir}/snapshots"
+            latest_dir="${upload_dir}/snapshots/latest"
+            date=$(TZ="Europe/Amsterdam" date "+%Y%m%d-%H%M%S")
+            prefix="${date}_${GITHUB_SHA::7}_"
+            upload_prefix="snapshots"
           fi
 
-          # Process each qtv file in build/
-          for DIR_PATH in build/qtv-*; do
-            FILE_PATH=$(find "${DIR_PATH}" -maxdepth 1 -type f -name "qtv*" | head -n1)
-            FILENAME=$(basename "${FILE_PATH}")    # qtv or qtv.exe
-            DIR_NAME=$(basename "${DIR_PATH}")     # qtv-linux-amd64
-            TARGET="${DIR_NAME#qtv-}"              # linux-amd64
-            OS="${TARGET%-*}"                      # linux
-            ARCH="${TARGET##*-}"                   # amd64
+          # Collect upload structure
+          for artifact in artifacts/*/*; do
+            artifact_file=$(basename "${artifact}")
+            artifact_dir=$(dirname "${artifact}")
 
-            # Latest
-            # - releases/latest/linux/amd64/qtv
-            # - snapshots/latest/linux/amd64/qtv
-            mkdir -p ${BASE_DIR}/latest/${OS}/${ARCH}
-            cp ${FILE_PATH} ${BASE_DIR}/latest/${OS}/${ARCH}
+            IFS='-' read -r ezq os arch <<< "${artifact_dir}"
 
-            # Versioned
-            # - releases/v1.2.3/linux/amd64/qtv
-            # - snapshots/linux/amd64/20260302-211855_cb79d6b_qtv
-            VERSION_DIR=${VERSION_BASE_DIR}/${OS}/${ARCH}
-            mkdir -p ${VERSION_DIR}
-            cp ${FILE_PATH} ${VERSION_DIR}/${VERSION_FILENAME_PREFIX}${FILENAME}
+            mkdir -p "${main_dir}/${os}/${arch}" "${latest_dir}/${os}/${arch}"
+
+            cp "${artifact}" "${main_dir}/${os}/${arch}/${prefix}${artifact_file}"
+            cp "${artifact}" "${latest_dir}/${os}/${arch}/${artifact_file}"
           done
+
+          # Set executable bit for all files
+          find "${upload_dir}" -type f -exec chmod 755 {} +
 
           # Generate checksums
-          find "$BASE_DIR" -type f -name "*qtv*" | while read -r FILE; do
-            md5sum "$FILE" | awk '{print $1}' > "$FILE.md5"
+          for artifact in $(find "${upload_dir}" -type f); do
+            artifact_file=$(basename "${artifact}")
+            artifact_dir=$(dirname "${artifact}")
+            (cd "${artifact_dir}" && md5sum "${artifact_file}" > "${artifact_file}.md5")
           done
 
-          echo "Files to upload:"
-          tree "${BASE_DIR}"
+          # Reset timestamp to time of commit
+          find "${upload_dir}" -type f -exec touch --date="${RELEASE_DATE}" {} +
+
+          echo "Upload artifacts:"
+          ls -lR "${upload_dir}"
 
           # Upload
-          # sftp -rp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "${{ secrets.SFTP_PORT }}" "${{ secrets.SFTP_USERNAME }}"@"${{ secrets.SFTP_HOST }}" <<< $"put -rp ${BASE_DIR}/* /${BASE_DIR}"
+          # sftp -rp -o 'StrictHostKeyChecking no' -o 'UserKnownHostsFile /dev/null' -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/${upload_prefix} <<< $'put -rp upload/${upload_prefix}/*'
