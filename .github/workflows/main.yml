@@ -51,8 +51,8 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: qtv-${{ matrix.os }}-${{ matrix.arch }}
-          path: build/${{ matrix.os }}/${{ matrix.arch }}/qtv*
+          name: ${{ matrix.os }}-${{ matrix.arch }}
+          path: build/*
           compression-level: 9
           retention-days: 3
 
@@ -102,7 +102,7 @@ jobs:
           mv build/* ${WORK_DIR}/latest
 
           # Generate md5 checksums
-          find "$WORK_DIR" -type f -name "qtv*" | while read -r FILE; do
+          find "$WORK_DIR" -type f -name "*qtv*" | while read -r FILE; do
             md5sum "$FILE" | awk '{print $1}' > "$FILE.md5"
           done
 
