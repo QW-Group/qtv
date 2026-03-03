@@ -114,7 +114,7 @@ jobs:
             # - for a snapshot: upload/snapshots/linux/amd64/20260302-211855_cb79d6b_qtv
             VERSION_DIR=${VERSION_BASE_DIR}/${OS}/${ARCH}
             mkdir -p ${VERSION_DIR}
-            cp ${FILE_PATH} ${VERSION_DIR}/${VERSION_FILENAME_PREFIX}${VERSION_FILENAME}
+            cp ${FILE_PATH} ${VERSION_DIR}/${VERSION_FILENAME_PREFIX}${FILENAME}
           done
 
           # Generate checksums
