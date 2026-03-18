@@ -6,6 +6,7 @@ require github.com/soheilhy/cmux v0.1.5
 
 require (
 	github.com/adam-lavrik/go-imath v0.0.0-20210910152346-265a42a96f0b
+	github.com/coder/websocket v1.8.14
 	github.com/gorilla/mux v1.8.1
 	github.com/qqshka/ringbuffer v0.0.0-20211204021706-a7e2a274a9f4
 	go.uber.org/atomic v1.11.0
