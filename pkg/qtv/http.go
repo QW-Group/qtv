@@ -555,8 +555,11 @@ func (sv *httpSv) serve(l net.Listener) (err error) {
 	stdLog.SetFlags(0)
 	stdLog.SetOutput(log.Logger)
 
+	handler := http.Handler(r)
+	handler = sv.websocketMiddleware(handler)
+
 	s := &http.Server{
-		Handler:  r,
+		Handler:  handler,
 		ErrorLog: stdLog,
 		// It is overall timeout for write,
 		// should be quite huge so client with slow connection has a chance to download data.
