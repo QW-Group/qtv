@@ -400,6 +400,8 @@ func (ds *dStream) downloadClientCmd(tr *tokenizerResult) (err error) {
 	}
 
 	name := tr.Argv(1)
+	name = strings.ReplaceAll(name, "\\", "/") // Normalize separators (prevent path traversal)
+	name = strings.ToLower(name)
 	gameDir := us.gameDir()
 
 	allow := false
@@ -415,8 +417,6 @@ func (ds *dStream) downloadClientCmd(tr *tokenizerResult) (err error) {
 		err = nil
 		goto denyDownload
 	}
-	name = strings.ReplaceAll(name, "\\", "/")
-	name = strings.ToLower(name)
 
 	if !us.qtv.qvs.Get("allow_download").Bool {
 		// Download is not allowed at all.
