@@ -69,7 +69,8 @@ jobs:
         with:
           name: qtv-${{ matrix.target }}
           path: |
-            qtv.*
+            build/${{ matrix.target }}/qtv${{ matrix.ext }}
+            build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5
           compression-level: 9
 
   upload:
