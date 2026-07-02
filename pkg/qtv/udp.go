@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/go-multierror"
@@ -45,6 +46,22 @@ type udpSv struct {
 	msg             *netMsgW
 	masters         map[string]*masterSv
 	mastersSequence int
+	rconFail        rconFailLimit
+	rconSeen        rconReplayCache
+}
+
+// rconFailLimit rate-limits BAD rcon attempts per source, per second.
+type rconFailLimit struct {
+	mu      sync.Mutex
+	second  int64
+	perHost map[string]int
+}
+
+// rconReplayCache remembers recently-used crypt authenticators (digest -> expiry
+// unix time) so each one is accepted only once within its freshness window.
+type rconReplayCache struct {
+	mu sync.Mutex
+	m  map[string]int64
 }
 
 type masterSv struct {
@@ -65,6 +82,7 @@ func newUdpSv(qtv *QTV) *udpSv {
 
 func (sv *udpSv) regVars(qtv *QTV) {
 	qtv.qvs.Reg("masters", qwDefaultMasters)
+	sv.regRconVars(qtv)
 }
 
 func (sv *udpSv) listen() (err error) {
@@ -142,6 +160,8 @@ func (sv *udpSv) parseConnectionLessPacket(addr net.Addr, msg *netMsgR) {
 		sv.pingCmd(addr)
 	case "status":
 		sv.statusCmd(addr, &tr)
+	case "rcon":
+		sv.rconCmd(addr, &tr)
 	}
 }
 

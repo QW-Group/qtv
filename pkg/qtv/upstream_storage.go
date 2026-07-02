@@ -279,15 +279,28 @@ func (uss *uStreamStorage) openAndRunWithDs(server string, lock bool, options uS
 }
 
 // Find upstream inside storage and cancel it (it should cause upstream notify storage when it actually dies).
-// Useful for console commands.
-func (uss *uStreamStorage) close(usId string) (err error) {
+// Useful for console commands. The argument is either a numeric stream id or the
+// server address it was opened with (e.g. `host:port`, as passed to `qtv`), so
+// automation that only knows the address can remove a stream without first
+// looking up its id.
+func (uss *uStreamStorage) close(idOrServer string) (err error) {
 	defer func() { err = multierror.Prefix(err, "uStreamStorage.close:") }()
 
 	uss.mu.Lock()
 	defer uss.mu.Unlock()
 
-	if id, err := isUsId(usId); err == nil {
+	if id, err := isUsId(idOrServer); err == nil {
 		if us := uss.getStreamById(id); us != nil {
+			return us.cancel()
+		}
+		return errNoSuchId
+	}
+
+	// Not an id — treat it as the server address. The `qtv` command opens
+	// upstreams with a "tcp:" prefix and stores them under that name, so match
+	// both the bare address and the prefixed form.
+	for _, name := range []string{idOrServer, "tcp:" + idOrServer} {
+		if us := uss.stream[name]; us != nil {
 			return us.cancel()
 		}
 	}
@@ -431,7 +444,7 @@ func closeCmd(qtv *QTV, cmdArgs *qCmdArgs) (err error) {
 	defer func() { err = multierror.Prefix(err, "closeCmd:") }()
 
 	if cmdArgs.Argc() != 2 {
-		return fmt.Errorf("Usage: %s <streamId>: close upstream connection", cmdArgs.Name())
+		return fmt.Errorf("Usage: %s <streamId|host:port>: close upstream connection", cmdArgs.Name())
 	}
 
 	return qtv.uss.close(cmdArgs.Argv(1))

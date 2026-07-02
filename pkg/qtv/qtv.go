@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -43,6 +44,7 @@ type QTV struct {
 	dss          *dStreamStorage    // Downstream storage.
 	udpSv        *udpSv             // UDP server.
 	httpSv       *httpSv            // HTTP server.
+	control      chan rconRequest   // Rcon commands, executed (and their output captured) in mainLoop.
 	ctx          context.Context    // QTV main context.
 	cancelFunc   context.CancelFunc // QTV main context cancel function.
 	tick         *sync.Cond         // Centralized tick.
@@ -62,6 +64,7 @@ func NewQTV(ctx context.Context, console <-chan string, arguments []string) (qtv
 
 	ctx, cancel := context.WithCancel(ctx)
 	qtv = &QTV{
+		control:    make(chan rconRequest, 8),
 		ctx:        ctx,
 		cancelFunc: cancel,
 		console:    console,
@@ -412,8 +415,76 @@ func (qtv *QTV) mainLoop() error {
 		case s := <-qtv.console:
 			qtv.cmd.Prepend(s)
 			qtv.cmdExec()
+		case req := <-qtv.control:
+			out := qtv.execCapture(req.command)
+			if req.reply != nil {
+				req.reply <- out
+			}
 		}
 	}
+}
+
+// rconRequest carries a command to run on mainLoop and a one-shot channel for
+// the command's captured console output.
+type rconRequest struct {
+	command string
+	reply   chan string // buffered(1); nil if the caller does not want output
+}
+
+// Rcon runs a command on the mainLoop goroutine (exactly as if typed on the
+// console) and returns whatever it printed to the console. Safe to call from any
+// goroutine. ok is false if QTV is shutting down.
+func (qtv *QTV) Rcon(command string) (output string, ok bool) {
+	reply := make(chan string, 1)
+	select {
+	case qtv.control <- rconRequest{command: command, reply: reply}:
+	case <-qtv.ctx.Done():
+		return "", false
+	}
+	select {
+	case out := <-reply:
+		return out, true
+	case <-qtv.ctx.Done():
+		return "", false
+	}
+}
+
+// execCapture runs a command on the current (mainLoop) goroutine, capturing what
+// its handlers print to os.Stdout. This is safe because mainLoop is the sole
+// command executor, so nothing else writes stdout during the window, and logging
+// goes to stderr. Output is bounded so a chatty command can't produce an
+// oversized rcon reply.
+func (qtv *QTV) execCapture(command string) (captured string) {
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		// Capture unavailable — still run the command.
+		qtv.cmd.Prepend(command)
+		qtv.cmdExec()
+		return ""
+	}
+	os.Stdout = w
+
+	done := make(chan string, 1)
+	go func() {
+		var b strings.Builder
+		_, _ = io.CopyN(&b, r, rconMaxOutput)
+		_, _ = io.Copy(io.Discard, r) // drain the rest so the writer never blocks
+		done <- b.String()
+	}()
+
+	// Restore stdout, close the writer (unblocking the drain goroutine), and
+	// collect the output — in a defer so a panicking command handler can't leave
+	// the whole process writing into a closed pipe or leak the goroutine.
+	defer func() {
+		os.Stdout = old
+		w.Close()
+		captured = <-done
+	}()
+
+	qtv.cmd.Prepend(command)
+	qtv.cmdExec()
+	return
 }
 
 // In case of graceful quit try to wait till streams clean up.
