@@ -52,6 +52,27 @@ var rconDenied = map[string]bool{
 	"rcon_limit":        true,
 }
 
+// rconFirstDenied reports the first denied command token in a command string, or
+// "" if none are denied. The console executor runs ';'- and newline-separated
+// commands (see qCmd.Exec), so every segment must be inspected — checking only
+// the first token would let a denied command ride in behind an allowed one, e.g.
+// "list; quit". Splitting fails closed: a ';' inside a quoted argument is treated
+// as a separator here even though the executor would not, which can only reject
+// (never wrongly allow) a request.
+func rconFirstDenied(command string) string {
+	segments := strings.FieldsFunc(command, func(r rune) bool { return r == ';' || r == '\n' })
+	for _, seg := range segments {
+		fields := strings.Fields(seg)
+		if len(fields) == 0 {
+			continue
+		}
+		if first := strings.ToLower(fields[0]); rconDenied[first] {
+			return first
+		}
+	}
+	return ""
+}
+
 func (sv *udpSv) regRconVars(qtv *QTV) {
 	qtv.qvs.Reg("rcon_password", "")       // empty = rcon disabled
 	qtv.qvs.Reg("rcon_crypt", "1")         // 1 = require SHA1+timestamp (like mvdsv sv_crypt_rcon)
@@ -78,7 +99,7 @@ func (sv *udpSv) rconCmd(addr net.Addr, tr *tokenizerResult) {
 		return // rcon not enabled — stay silent, like an unknown command
 	}
 
-	ok, replayKey := sv.rconValidate(tr, password)
+	ok, replayKey, reqTime := sv.rconValidate(tr, password)
 	if !ok {
 		if sv.rconFailAllowed(addr) {
 			log.Warn().Str("ctx", "udpSv").Str("event", "rcon-bad").Str("remote", addr.String()).Msg("")
@@ -89,7 +110,7 @@ func (sv *udpSv) rconCmd(addr net.Addr, tr *tokenizerResult) {
 	// Replay protection (crypt mode only): each authenticator is single-use for
 	// its freshness window, so a captured non-idempotent command (close, etc.)
 	// cannot be replayed.
-	if replayKey != "" && !sv.rconReplayOK(replayKey) {
+	if replayKey != "" && !sv.rconReplayOK(replayKey, reqTime) {
 		log.Warn().Str("ctx", "udpSv").Str("event", "rcon-replay").Str("remote", addr.String()).Msg("")
 		return
 	}
@@ -108,9 +129,9 @@ func (sv *udpSv) rconCmd(addr net.Addr, tr *tokenizerResult) {
 		return
 	}
 
-	if first := strings.ToLower(strings.Fields(command)[0]); rconDenied[first] {
-		log.Warn().Str("ctx", "udpSv").Str("event", "rcon-denied").Str("remote", addr.String()).Str("cmd", first).Msg("")
-		sv.rconReply(addr, fmt.Sprintf("command %q is not allowed over rcon\n", first))
+	if denied := rconFirstDenied(command); denied != "" {
+		log.Warn().Str("ctx", "udpSv").Str("event", "rcon-denied").Str("remote", addr.String()).Str("cmd", denied).Msg("")
+		sv.rconReply(addr, fmt.Sprintf("command %q is not allowed over rcon\n", denied))
 		return
 	}
 
@@ -123,33 +144,36 @@ func (sv *udpSv) rconCmd(addr net.Addr, tr *tokenizerResult) {
 }
 
 // rconValidate checks the auth token in Argv(1). On success it returns a replay
-// key (the digest) for crypt mode, or "" for plaintext (no replay protection).
-func (sv *udpSv) rconValidate(tr *tokenizerResult, password string) (ok bool, replayKey string) {
+// key (the digest) for crypt mode, or "" for plaintext (no replay protection),
+// plus the request timestamp (the end of whose freshness window bounds how long
+// the replay key must be remembered); reqTime is 0 when there is no timestamp.
+func (sv *udpSv) rconValidate(tr *tokenizerResult, password string) (ok bool, replayKey string, reqTime int64) {
 	auth := tr.Argv(1)
 	if auth == "" {
-		return false, ""
+		return false, "", 0
 	}
 
 	if !sv.rconCrypt() {
-		return subtle.ConstantTimeCompare([]byte(auth), []byte(password)) == 1, ""
+		return subtle.ConstantTimeCompare([]byte(auth), []byte(password)) == 1, "", 0
 	}
 
 	// auth = <40 hex digest><>=16 hex timestamp>. mvdsv requires at least
 	// digest+timestamp and parses exactly rconTimeHexLen timestamp chars.
 	if len(auth) < rconDigestHexLen+rconTimeHexLen {
-		return false, ""
+		return false, "", 0
 	}
 	digest := auth[:rconDigestHexLen]
 	timeHex := auth[rconDigestHexLen:] // hashed in full, like mvdsv's time_start
 
 	if tl := sv.rconTimestampLen(); tl > 0 {
-		reqTime, ok := parseRconTime(timeHex[:rconTimeHexLen])
+		t, ok := parseRconTime(timeHex[:rconTimeHexLen])
 		if !ok {
-			return false, ""
+			return false, "", 0
 		}
-		if delta := time.Now().Unix() - reqTime; delta > int64(tl) || delta < -int64(tl) {
-			return false, "" // stale or from the future
+		if delta := time.Now().Unix() - t; delta > int64(tl) || delta < -int64(tl) {
+			return false, "", 0 // stale or from the future
 		}
+		reqTime = t
 	}
 
 	// SHA1("rcon" + " " + password + timeHex + " " + each arg + " ")
@@ -164,9 +188,9 @@ func (sv *udpSv) rconValidate(tr *tokenizerResult, password string) (ok bool, re
 	}
 	want := fmt.Sprintf("%X", h.Sum(nil)) // uppercase, exactly like mvdsv
 	if subtle.ConstantTimeCompare([]byte(digest), []byte(want)) != 1 {
-		return false, ""
+		return false, "", 0
 	}
-	return true, digest
+	return true, digest, reqTime
 }
 
 // parseRconTime decodes the little-endian hex time_t that mvdsv clients append,
@@ -241,13 +265,19 @@ func (sv *udpSv) rconFailAllowed(addr net.Addr) bool {
 // rconReplayOK records a crypt authenticator and reports whether it is new (not a
 // replay). Only valid (authenticated) requests reach here, so the cache cannot be
 // flooded by an attacker. Expired entries are swept lazily.
-func (sv *udpSv) rconReplayOK(key string) bool {
+//
+// The entry must live until the authenticator can no longer pass validation,
+// which is the end of its freshness window (reqTime + tl), not now + tl. When the
+// request's timestamp is ahead of our clock (client skew) it is first seen before
+// reqTime, so now + tl would expire the entry while the same authenticator is
+// still acceptable — reopening a replay gap.
+func (sv *udpSv) rconReplayOK(key string, reqTime int64) bool {
 	tl := sv.rconTimestampLen()
 	if tl <= 0 {
 		return true // freshness window disabled → replay protection off
 	}
 	now := time.Now().Unix()
-	exp := now + int64(tl)
+	exp := reqTime + int64(tl)
 
 	sv.rconSeen.mu.Lock()
 	defer sv.rconSeen.mu.Unlock()
