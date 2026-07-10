@@ -1,6 +1,6 @@
 module github.com/qw-group/qtv
 
-go 1.24.0
+go 1.25.0
 
 require github.com/soheilhy/cmux v0.1.5
 
@@ -19,18 +19,18 @@ require (
 
 require (
 	github.com/hashicorp/go-multierror v1.1.1
-	golang.org/x/net v0.47.0 // indirect
-	golang.org/x/text v0.31.0 // indirect
+	golang.org/x/net v0.54.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 )
 
 require (
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/markphelps/optional v0.11.0
-	golang.org/x/crypto v0.44.0
+	golang.org/x/crypto v0.52.0
 )
 
 require (
 	github.com/rs/zerolog v1.34.0
 	github.com/zeebo/xxh3 v1.0.2
-	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 )
