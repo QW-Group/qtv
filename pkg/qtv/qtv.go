@@ -48,6 +48,7 @@ type QTV struct {
 	tick         *sync.Cond         // Centralized tick.
 	demoList     atomic.Value       // copy-on-write.
 	demoListLock sync.Mutex         // Used for updater only. Getters does not need it
+	demoListDir  string             // Used by updater only.
 	serverInfo   info.InfoTs        // Server info.
 }
 
@@ -70,7 +71,7 @@ func NewQTV(ctx context.Context, console <-chan string, arguments []string) (qtv
 	if err := qtv.newFlagSet(arguments); err != nil {
 		return qtv, err
 	}
-	qtv.setDemoList(make(demoList, 0))
+	qtv.setDemoList(make([]DemoListItem, 0))
 	qtv.cmd = newQCmd(qtv)
 	qtv.qvs = newQVarStorage(qtv)
 
@@ -91,8 +92,6 @@ func NewQTV(ctx context.Context, console <-chan string, arguments []string) (qtv
 
 	return qtv, nil
 }
-
-type demoList []DemoListItem
 
 type DemoListItem struct {
 	FileInfo os.FileInfo
@@ -300,18 +299,48 @@ func demoNameHasValidExtension(name string) bool {
 
 func (qtv *QTV) updateDemoList() error {
 	demoDir := qtv.demoDir()
+
+	var prev []DemoListItem
+	if qtv.demoListDir == demoDir {
+		prev = qtv.getDemoList()
+	}
+
+	list, err := buildDemoList(demoDir, prev)
+	if err != nil {
+		if os.IsNotExist(err) || qtv.demoListDir != demoDir {
+			qtv.demoListDir = demoDir
+			qtv.setDemoList(make([]DemoListItem, 0))
+		}
+		return err
+	}
+
+	qtv.demoListDir = demoDir
+	qtv.setDemoList(list)
+	return nil
+}
+
+// Returns demos in demoDir, newest first. Hashes are reused from prev for unchanged files.
+func buildDemoList(demoDir string, prev []DemoListItem) ([]DemoListItem, error) {
 	f, err := os.Open(demoDir)
 	if err != nil {
-		qtv.setDemoList(make(demoList, 0))
-		return err
+		return nil, err
 	}
 	defer f.Close()
 
 	// Get file list in demo dir.
-	infosFull, err := f.Readdir(-1)
+	infos, err := f.Readdir(-1)
+	if err != nil {
+		return nil, err
+	}
+
+	cache := make(map[string]DemoListItem, len(prev))
+	for _, item := range prev {
+		cache[item.FileInfo.Name()] = item
+	}
+
 	// Filter out unnecessary files.
-	demoList := make(demoList, 0, len(infosFull))
-	for _, info := range infosFull {
+	demoList := make([]DemoListItem, 0, len(infos))
+	for _, info := range infos {
 		name := info.Name()
 		if strings.HasPrefix(name, ".") {
 			continue // Ignore hidden files.
@@ -319,14 +348,27 @@ func (qtv *QTV) updateDemoList() error {
 		if !demoNameHasValidExtension(name) {
 			continue // Unknown extension.
 		}
-		if info.Size() == 0 {
-			continue // Empty file.
+
+		path := filepath.Join(demoDir, name)
+		if info.Mode()&os.ModeSymlink != 0 {
+			// Readdir describes the link itself, the cache must track the target we hash.
+			info, err = os.Stat(path)
+			if err != nil {
+				continue
+			}
+		}
+		if !info.Mode().IsRegular() || info.Size() == 0 {
+			continue
 		}
 
-		demoPath := filepath.Join(demoDir, info.Name())
-		hashXXH3, err := XXH3Sum(demoPath)
+		if old, ok := cache[name]; ok && old.FileInfo.Size() == info.Size() && old.FileInfo.ModTime().Equal(info.ModTime()) {
+			demoList = append(demoList, DemoListItem{FileInfo: info, Hash: old.Hash})
+			continue
+		}
+
+		hashXXH3, err := XXH3Sum(path)
 		if err != nil {
-			log.Trace().Str("ctx", "QTV").Str("event", "updateDemoList").Str("file", info.Name()).Int64("size", info.Size()).Msg("XXH3Sum")
+			log.Trace().Str("ctx", "QTV").Str("event", "updateDemoList").Str("file", name).Int64("size", info.Size()).Msg("XXH3Sum")
 			continue
 		}
 
@@ -339,19 +381,18 @@ func (qtv *QTV) updateDemoList() error {
 	}
 
 	sort.Slice(demoList, func(i, j int) bool { return demoList[i].FileInfo.ModTime().After(demoList[j].FileInfo.ModTime()) })
-	qtv.setDemoList(demoList)
 
-	return err
+	return demoList, nil
 }
 
-func (qtv *QTV) setDemoList(demoList demoList) {
+func (qtv *QTV) setDemoList(demoList []DemoListItem) {
 	qtv.demoListLock.Lock()
 	qtv.demoList.Store(demoList)
 	qtv.demoListLock.Unlock()
 }
 
-func (qtv *QTV) getDemoList() demoList {
-	return qtv.demoList.Load().(demoList)
+func (qtv *QTV) getDemoList() []DemoListItem {
+	return qtv.demoList.Load().([]DemoListItem)
 }
 
 func (qtv *QTV) uploadCleanUp() {

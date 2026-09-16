@@ -102,7 +102,7 @@ type mainTemplateData struct {
 
 type demosTemplateData struct {
 	mainTemplateData
-	List demoList
+	List []DemoListItem
 }
 
 type nowPlayingTemplateData struct {
