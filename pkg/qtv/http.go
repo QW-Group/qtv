@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -484,6 +485,8 @@ func containsHiddenFile(name string) bool {
 // remove files and directories that start with a period from its output.
 type hidingFile struct {
 	http.File
+	fsys http.FileSystem
+	name string
 }
 
 // Readdir is a wrapper around the Readdir method of the embedded File
@@ -495,6 +498,17 @@ func (f hidingFile) Readdir(n int) (fis []fs.FileInfo, err error) {
 		name := file.Name()
 		if hiddenFile(name) || fileNameHasSensitiveExtension(name) {
 			continue
+		}
+		if !file.IsDir() && demoNameHasValidExtension(name) {
+			child, openErr := f.fsys.Open(path.Join(f.name, name))
+			if openErr != nil {
+				continue
+			}
+			complete := demoIsComplete(child)
+			child.Close()
+			if !complete {
+				continue
+			}
 		}
 
 		fis = append(fis, file)
@@ -521,7 +535,16 @@ func (fsys fileHidingFileSystem) Open(name string) (http.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return hidingFile{file}, err
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	if !info.IsDir() && demoNameHasValidExtension(name) && !demoIsComplete(file) {
+		file.Close()
+		return nil, fs.ErrNotExist
+	}
+	return hidingFile{File: file, fsys: fsys.FileSystem, name: name}, nil
 }
 
 // Serve HTTP(s) requests.
