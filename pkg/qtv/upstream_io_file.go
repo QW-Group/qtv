@@ -57,6 +57,10 @@ func (ust *uStreamFile) Open(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	if !demoIsComplete(f) {
+		f.Close()
+		return os.ErrNotExist
+	}
 	ust.file = f
 	return nil
 }
