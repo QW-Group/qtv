@@ -873,15 +873,22 @@ func (qp *qProtocol) readList(list []string, extended bool) (byte, error) {
 	} else {
 		first = int(qp.r.GetByte()) + 1
 	}
-	for ; first < len(list); first++ {
-		list[first] = qp.r.GetString()
-		if list[first] == "" {
+	if first > len(list) {
+		return 0, errors.New("readList: overflow")
+	}
+	for ; ; first++ {
+		name := qp.r.GetString()
+		// The empty name terminates the wire list; it does not occupy a slot.
+		if name == "" {
+			if first < len(list) {
+				list[first] = ""
+			}
 			break
 		}
-	}
-
-	if first >= len(list) {
-		return 0, errors.New("readList: overflow")
+		if first >= len(list) {
+			return 0, errors.New("readList: overflow")
+		}
+		list[first] = name
 	}
 
 	return qp.r.GetByte(), nil

@@ -68,6 +68,11 @@ func (qp *qProtocol) putList(msg *netMsgW, first int, list []string, svc protoco
 	}
 
 	msg.PutByte(0)
+	// A full table has no empty array element, but still ends with continuation 0.
+	if i == len(list) {
+		msg.PutByte(0)
+		return -1
+	}
 	msg.PutByte(byte(i))
 
 	return i
