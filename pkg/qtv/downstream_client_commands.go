@@ -245,7 +245,7 @@ func (ds *dStream) soundListClientCmd(tr *tokenizerResult) (err error) {
 		return ds.setState(dsNeedInitialData)
 	}
 
-	if err := us.qp.sendList(ds, us.qp.soundList[:], svc_soundlist, svc_fte_soundlistshort_UNUSED); err != nil {
+	if err := us.qp.sendList(ds, us.qp.soundList[:], svc_soundlist, svc_fte_soundlistshort); err != nil {
 		return err
 	}
 

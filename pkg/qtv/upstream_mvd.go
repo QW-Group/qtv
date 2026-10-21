@@ -491,7 +491,7 @@ func (us *uStream) sendInitialMVDData_1_0(ds *dStream) (err error) {
 	if err := us.qp.sendServerData(ds); err != nil {
 		return err
 	}
-	if err := us.qp.sendList(ds, us.qp.soundList[:], svc_soundlist, svc_fte_soundlistshort_UNUSED); err != nil {
+	if err := us.qp.sendList(ds, us.qp.soundList[:], svc_soundlist, svc_fte_soundlistshort); err != nil {
 		return err
 	}
 	if err := us.qp.sendList(ds, us.qp.modelList[:], svc_modellist, svc_fte_modellistshort); err != nil {
