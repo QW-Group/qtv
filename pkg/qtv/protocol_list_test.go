@@ -96,53 +96,84 @@ func TestPutListEndsFullCatalog(t *testing.T) {
 	qp := &qProtocol{}
 	msg := newNetMsgW(make([]byte, 1024), false)
 	// A list with one usable slot, occupied by "a", has no spare sentinel slot.
-	next := qp.putList(msg, 0, []string{"", "a"}, svc_soundlist, svc_fte_soundlistshort_UNUSED)
+	next := qp.putList(msg, 0, []string{"", "a"}, svc_soundlist, svc_fte_soundlistshort)
 	want := []byte{46, 0, 'a', 0, 0, 0}
 	if next != -1 || msg.error || !bytes.Equal(msg.Bytes(), want) {
 		t.Fatalf("next=%d, badwrite=%v, bytes=%v, want %v", next, msg.error, msg.Bytes(), want)
 	}
 }
 
-// TestListCatalogRoundTrip exercises chunk continuation and completion at the old limit.
+// TestListCatalogRoundTrip checks both storage capacities, cursor widths, and chunk completion.
 func TestListCatalogRoundTrip(t *testing.T) {
-	for _, count := range []int{0, 1, 254, 255} {
-		t.Run(fmt.Sprint(count), func(t *testing.T) {
-			list := make([]string, 256)
-			for i := 1; i <= count; i++ {
-				list[i] = fmt.Sprintf("sound/slot%03d.wav", i)
-			}
-			decoded := make([]string, len(list))
-			qp := &qProtocol{}
-			cursor := 0
-			for chunks := 0; ; chunks++ {
-				if chunks >= 20 {
-					t.Fatal("catalog writer did not terminate")
-				}
-				msg := newNetMsgW(make([]byte, 2048), false)
-				next := qp.putList(msg, cursor, list, svc_soundlist, svc_fte_soundlistshort_UNUSED)
-				if msg.error || msg.Bytes()[0] != 46 {
-					t.Fatalf("invalid legacy chunk: %v", msg.Bytes())
-				}
-				qp.r = newNetMsgR(msg.Bytes()[1:], false)
-				continuation, err := qp.readList(decoded, false)
-				if err != nil || qp.r.error || qp.r.RPos() != len(msg.Bytes())-1 {
-					t.Fatalf("chunk parse: %v, badread=%v", err, qp.r.error)
-				}
-				if next < 0 {
-					if continuation != 0 {
-						t.Fatalf("final continuation=%d", continuation)
+	for _, test := range []struct {
+		name       string // Negotiated protocol variant.
+		capacity   int    // Storage size, including the reserved zero slot.
+		counts     []int  // Catalog sizes around cursor and capacity boundaries.
+		nameFormat string // Original path lengths used to exercise chunking.
+		chunkLimit int    // Upper bound that detects a nonterminating writer.
+	}{
+		{"legacy", 256, []int{0, 1, 254, 255}, "sound/slot%03d.wav", 20},
+		{"sounddbl", 4096, []int{254, 255, 256, 511, 512, 4095}, "sound/slot%04d.wav", 201},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, count := range test.counts {
+				t.Run(fmt.Sprint(count), func(t *testing.T) {
+					list := make([]string, test.capacity)
+					for i := 1; i <= count; i++ {
+						list[i] = fmt.Sprintf(test.nameFormat, i)
 					}
-					break
-				}
-				if next <= cursor || int(continuation) != next {
-					t.Fatalf("invalid continuation: cursor=%d next=%d wire=%d", cursor, next, continuation)
-				}
-				cursor = next
-			}
-			for i, name := range list {
-				if decoded[i] != name {
-					t.Fatalf("slot %d: got %q want %q", i, decoded[i], name)
-				}
+					decoded := make([]string, len(list))
+					qp := soundTestProtocol()
+					if test.capacity == 256 {
+						qp.extFlagsFTE1 = 0
+					}
+					cursor := 0
+					for chunks := 0; ; chunks++ {
+						if chunks >= test.chunkLimit {
+							t.Fatal("catalog writer did not terminate")
+						}
+						msg := newNetMsgW(make([]byte, 2048), false)
+						next := qp.putList(msg, cursor, list, svc_soundlist, svc_fte_soundlistshort)
+						extended := cursor > 255
+						wantSvc := byte(46)
+						if extended {
+							wantSvc = 56
+						}
+						if msg.error || len(msg.Bytes()) == 0 || msg.Bytes()[0] != wantSvc {
+							t.Fatalf("invalid chunk at cursor %d: badwrite=%v bytes=%v", cursor, msg.error, msg.Bytes())
+						}
+						qp.r = newNetMsgR(msg.Bytes()[1:], false)
+						continuation, err := qp.readList(decoded, extended)
+						if err != nil || qp.r.error || qp.r.RPos() != len(msg.Bytes())-1 {
+							t.Fatalf("chunk parse: %v, badread=%v", err, qp.r.error)
+						}
+						if footer := msg.Bytes()[len(msg.Bytes())-1]; continuation != footer {
+							t.Fatalf("continuation=%d, wire footer=%d", continuation, footer)
+						}
+						if err := qp.readMessage(msg.Bytes(), mvdMsgRead, playersMaskAll); err != nil {
+							t.Fatalf("cursor %d: %v", cursor, err)
+						}
+						if next < 0 {
+							if continuation != 0 {
+								t.Fatalf("final continuation=%d", continuation)
+							}
+							break
+						}
+						if next <= cursor || continuation == 0 || continuation != byte(next) ||
+							(test.capacity == 256 && int(continuation) != next) {
+							t.Fatalf("invalid continuation: cursor=%d next=%d wire=%d", cursor, next, continuation)
+						}
+						cursor = next
+					}
+					for i, name := range list {
+						if decoded[i] != name {
+							t.Fatalf("slot %d: got %q want %q", i, decoded[i], name)
+						}
+						if i >= len(qp.soundList) || qp.soundList[i] != name {
+							t.Fatalf("dispatched slot %d lost or changed", i)
+						}
+					}
+				})
 			}
 		})
 	}

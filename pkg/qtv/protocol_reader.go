@@ -662,6 +662,64 @@ func (qp *qProtocol) readSound() error {
 	return nil
 }
 
+// readSoundExtended consumes the FTE/NQ event layout without translating the forwarded bytes.
+// Unlike svc_sound, its flags are separate from entity/channel and select optional fields.
+func (qp *qProtocol) readSoundExtended() error {
+	if qp.extFlagsFTE1&ftePextSoundDbl == 0 {
+		return errors.New("soundextended without SOUNDDBL")
+	}
+	const (
+		sndVolume      = 1 << 0
+		sndAttenuation = 1 << 1
+		sndMoreFlags   = 1 << 2
+		sndLargeEntity = 1 << 3
+		sndLargeSound  = 1 << 4
+		sndSpeed       = 1 << 5
+		sndTimeOffset  = 1 << 6
+		sndPitch       = 1 << 7
+		sndVelocity    = 1 << 8 // Bit zero of the additional FTE channel flags.
+	)
+	flags := uint64(qp.r.GetByte())
+	if flags&sndMoreFlags != 0 {
+		flags |= qp.r.GetFTEUint64() << 8
+	}
+	if flags&sndVolume != 0 {
+		qp.r.GetByte()
+	}
+	if flags&sndAttenuation != 0 {
+		qp.r.GetByte()
+	}
+	if flags&sndPitch != 0 {
+		qp.r.GetByte()
+	}
+	if flags&sndTimeOffset != 0 {
+		qp.r.GetInt16()
+	}
+	if flags&sndVelocity != 0 {
+		for i := 0; i < 3; i++ {
+			qp.r.GetInt16()
+		}
+	}
+	if flags&sndSpeed != 0 {
+		qp.r.GetUint16()
+	}
+	qp.r.GetUint16() // Packed entity/channel, or a separate entity followed by channel.
+	if flags&sndLargeEntity != 0 {
+		qp.r.GetByte()
+	}
+	sound := int(qp.r.GetByte())
+	if flags&sndLargeSound != 0 {
+		sound |= int(qp.r.GetByte()) << 8
+	}
+	if sound >= maxSounds {
+		return errors.New("soundextended: sound index overflow")
+	}
+	for i := 0; i < 3; i++ {
+		qp.r.GetCoord()
+	}
+	return nil
+}
+
 func (qp *qProtocol) readDamage() error {
 	qp.r.GetByte()
 	qp.r.GetByte()
@@ -918,8 +976,16 @@ func (qp *qProtocol) fixEmptyMapName() {
 	}
 }
 
-func (qp *qProtocol) readSoundList() error {
-	_, err := qp.readList(qp.soundList[:], false)
+// readSoundList applies the current map's negotiated sound limit to either cursor width.
+func (qp *qProtocol) readSoundList(extended bool) error {
+	list := qp.soundList[:]
+	if qp.extFlagsFTE1&ftePextSoundDbl == 0 {
+		if extended {
+			return errors.New("soundlistshort without SOUNDDBL")
+		}
+		list = list[:maxList]
+	}
+	_, err := qp.readList(list, extended)
 	return err
 }
 
@@ -957,6 +1023,8 @@ func (qp *qProtocol) readMessageForSvc() error {
 		return qp.readUpdateStat()
 	case svc_sound:
 		return qp.readSound()
+	case svc_fte_soundextended:
+		return qp.readSoundExtended()
 	case svc_print:
 		return qp.readPrint()
 	case svc_stufftext:
@@ -1026,7 +1094,9 @@ func (qp *qProtocol) readMessageForSvc() error {
 	case svc_fte_modellistshort:
 		return qp.readModelList(true)
 	case svc_soundlist:
-		return qp.readSoundList()
+		return qp.readSoundList(false)
+	case svc_fte_soundlistshort:
+		return qp.readSoundList(true)
 	case svc_packetentities:
 		return qp.readPacketEntities(false)
 	case svc_deltapacketentities:
