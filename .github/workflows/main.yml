@@ -44,7 +44,7 @@ jobs:
            ext: ".exe"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Prepare Build Environment
         uses: actions/setup-go@v6
@@ -65,7 +65,7 @@ jobs:
              md5sum build/${{ matrix.target }}/qtv${{ matrix.ext }} > build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5
 
       - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: qtv-${{ matrix.target }}
           path: |
@@ -83,7 +83,7 @@ jobs:
     if: github.repository == 'QW-Group/qtv' && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'release')
     steps:
       - name: Download Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: qtv-${{ matrix.target }}
           path: build/${{ matrix.target }}
