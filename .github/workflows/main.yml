@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
+      matrix: &platforms
        target: [linux-amd64, linux-arm64, linux-arm, freebsd-amd64, openbsd-amd64, windows-x64]
        include:
          - target: linux-amd64
@@ -77,27 +77,28 @@ jobs:
     needs: build
     timeout-minutes: 10
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: *platforms
     if: github.repository == 'QW-Group/qtv' && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'release')
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          path: qtv
-
       - name: Download Artifacts
         uses: actions/download-artifact@v4
+        with:
+          name: qtv-${{ matrix.target }}
+          path: build/${{ matrix.target }}
 
       - name: Setup SSH
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
         shell: bash
         run: |
-          ssh-agent -a $SSH_AUTH_SOCK > /dev/null
+          ssh-agent -a "$SSH_AUTH_SOCK" > /dev/null
           ssh-add - <<< "${{ secrets.SSH_PRIVATE_KEY }}"
 
       - name: Set date
         run: |
-          echo "DATE=$(TZ="Europe/Amsterdam" date "+%Y%m%d-%H%M%S")" >> $GITHUB_ENV
+          echo "DATE=$(TZ="Europe/Amsterdam" date "+%Y%m%d-%H%M%S")" >> "$GITHUB_ENV"
 
       - name: Deploy
         env:
@@ -105,19 +106,19 @@ jobs:
         shell: bash
         run: |
           if [[ $GITHUB_REF == refs/tags/* ]]; then
-             mkdir -p upload/releases/${{ github.ref_name }}/${{ matrix.os }}/${{ matrix.arch }}
-             mkdir -p upload/releases/latest/${{ matrix.os }}/${{ matrix.arch }}
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/releases/${{ github.ref_name }}/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}
-             cp build/${{ matrix.target }}/qtv{{ matrix.ext }}.md5 upload/releases/${{ github.ref_name }}/${{ matrix.os }}/${{ matrix.arch }}/qtv{{ matrix.ext }}.md5
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/releases/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}
-             cp build/${{ matrix.target }}/qtv{{ matrix.ext }}.md5 upload/releases/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv{{ matrix.ext }}.md5
+             mkdir -p "upload/releases/${{ github.ref_name }}/${{ matrix.os }}/${{ matrix.arch }}"
+             mkdir -p "upload/releases/latest/${{ matrix.os }}/${{ matrix.arch }}"
+             cp "build/${{ matrix.target }}/qtv${{ matrix.ext }}" "upload/releases/${{ github.ref_name }}/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}"
+             cp "build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5" "upload/releases/${{ github.ref_name }}/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}.md5"
+             cp "build/${{ matrix.target }}/qtv${{ matrix.ext }}" "upload/releases/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}"
+             cp "build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5" "upload/releases/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}.md5"
              sftp -rp -o 'StrictHostKeyChecking no' -o 'UserKnownHostsFile /dev/null' -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/releases <<< $'put -rp upload/releases/*'
           else
-             mkdir -p upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}
-             mkdir -p upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}/${{ env.DATE }}_${GITHUB_SHA::7}_qtv${{ matrix.ext }}
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5 upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}/${{ env.DATE }}_${GITHUB_SHA::7}_qtv${{ matrix.ext }}.md5
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }} upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}
-             cp build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5 upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}.md5
+             mkdir -p "upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}"
+             mkdir -p "upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}"
+             cp "build/${{ matrix.target }}/qtv${{ matrix.ext }}" "upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}/${{ env.DATE }}_${GITHUB_SHA::7}_qtv${{ matrix.ext }}"
+             cp "build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5" "upload/snapshots/${{ matrix.os }}/${{ matrix.arch }}/${{ env.DATE }}_${GITHUB_SHA::7}_qtv${{ matrix.ext }}.md5"
+             cp "build/${{ matrix.target }}/qtv${{ matrix.ext }}" "upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}"
+             cp "build/${{ matrix.target }}/qtv${{ matrix.ext }}.md5" "upload/snapshots/latest/${{ matrix.os }}/${{ matrix.arch }}/qtv${{ matrix.ext }}.md5"
              sftp -rp -o 'StrictHostKeyChecking no' -o 'UserKnownHostsFile /dev/null' -P ${{ secrets.SFTP_PORT }} ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }}:/snapshots <<< $'put -rp upload/snapshots/*'
           fi
