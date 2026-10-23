@@ -174,7 +174,7 @@ const (
 	maxClients            = 32
 	maxList               = 256
 	maxModels             = maxEntities + maxStaticEntities // Could be max uint16, but stay with static + baseline entity limit
-	maxSounds             = maxList
+	maxSounds             = 4096                            // Artificial limit matching MVDSV; slot zero is reserved.
 	maxEntityFrames       = 64
 	maxDemoPacketEntities = 300
 	extraEntitiesDouble   = 512
@@ -200,6 +200,7 @@ const (
 
 const (
 	ftePextTrans        uint32 = 0x00000008 // Extra 8 bit with alpha in delta if changed
+	ftePextSoundDbl     uint32 = 0x00000080 // Extended sound events and 16-bit sound-list cursors.
 	ftePextModelDbl     uint32 = 0x00001000 // Up to uint16 model indices
 	ftePextEntityDbl    uint32 = 0x00002000 // Up to 1024 entity indices
 	ftePextEntityDbl2   uint32 = 0x00004000 // Up to 2048 entity indices
@@ -323,8 +324,8 @@ const (
 	svc_serverinfo
 	svc_updatepl
 	svc_nails2
-	svc_unused_55
-	svc_fte_soundlistshort_UNUSED
+	svc_fte_soundextended
+	svc_fte_soundlistshort
 	svc_unused_57
 	svc_unused_58
 	svc_unused_59

@@ -80,6 +80,22 @@ func (msg *netMsgR) GetInt16() int16 {
 	return int16(msg.GetUint16())
 }
 
+// GetFTEUint64 reads FTE's leading-one length prefix, followed by big-endian payload bytes.
+// This is not LEB128: 0xxxxxxx is one byte, 10xxxxxx adds one byte, up to ff plus eight bytes.
+func (msg *netMsgR) GetFTEUint64() uint64 {
+	first := msg.GetByte()
+	count := 0
+	for bit := byte(0x80); first&bit != 0; bit >>= 1 {
+		first -= bit
+		count++
+	}
+	value := uint64(first)
+	for ; count > 0; count-- {
+		value = value<<8 | uint64(msg.GetByte())
+	}
+	return value
+}
+
 func (msg *netMsgR) GetUint32() uint32 {
 	if msg.error || msg.rPos+4 > len(msg.b) {
 		msg.error = true
