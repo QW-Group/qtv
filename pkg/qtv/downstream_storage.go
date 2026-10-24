@@ -139,6 +139,34 @@ func (dss *dStreamStorage) open(conn net.Conn) (err error) {
 	return nil
 }
 
+func (dss *dStreamStorage) openWS(conn net.Conn) (<-chan struct{}, error) {
+	done := make(chan struct{})
+
+	dss.mu.Lock()
+	defer dss.mu.Unlock()
+
+	if len(dss.stream) >= dss.maxClients() || dss.closing {
+		conn.Close()
+		close(done)
+		return done, nil
+	}
+
+	dsId := dStreamId(dss.ids.Get())
+	ds, err := newDStream(dss.qtv, dss.notifyCh, conn, dsId)
+	if err != nil {
+		conn.Close()
+		dss.ids.Put(uint32(dsId))
+		close(done)
+		return done, err
+	}
+	ds.wsDone = done
+	dss.stream[dsId] = ds
+
+	log.Debug().Str("ctx", "dStreamStorage").Str("event", "openWS").Uint32("id", uint32(ds.id)).Msg("")
+
+	return done, nil
+}
+
 func (dss *dStreamStorage) count() int {
 	dss.mu.Lock()
 	defer dss.mu.Unlock()
@@ -169,6 +197,11 @@ func (dss *dStreamStorage) remove(dsId dStreamId) error {
 
 		dss.ids.Put(uint32(ds.id)) // Return id back to the pool.
 		delete(dss.stream, dsId)
+
+		if ds.wsDone != nil {
+			close(ds.wsDone)
+		}
+
 		return nil
 	}
 

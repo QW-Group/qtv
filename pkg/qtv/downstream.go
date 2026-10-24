@@ -50,6 +50,7 @@ type dStream struct {
 	pov                  optional.Int           // Player slot this dStream tracks, optional.
 	followId             dStreamId              // id of followed dStream, zero if not following.
 	connectStart         uint64                 // Time when donstream connected.
+	wsDone               chan struct{}          // Closed when dStreamStorage.remove() runs for this WebSocket-backed dStream. Nil for TCP clients.
 }
 
 // Allocates new downsteam.
