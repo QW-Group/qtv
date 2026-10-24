@@ -1260,7 +1260,7 @@ func (us *uStream) sendUserListUpdateToUpstream(ds *dStream, action qtvUserListA
 	defer func() { err = multierror.Prefix(err, "uStream.sendUserListUpdateToUpstream:") }()
 
 	s := ds.userListActionToString(action, false)
-	if err := us.sendClcStringCmdf(s); err != nil {
+	if err := us.sendClcStringCmdf("%s", s); err != nil {
 		if getUStreamSendNetMsgError(err) == nil {
 			err = nil // Ignore minor errors.
 		}
