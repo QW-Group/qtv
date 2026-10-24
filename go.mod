@@ -8,19 +8,19 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/markphelps/optional v0.11.0
 	github.com/qqshka/ringbuffer v0.0.0-20211204021706-a7e2a274a9f4
-	github.com/rs/zerolog v1.34.0
+	github.com/rs/zerolog v1.35.1
 	github.com/soheilhy/cmux v0.1.5
-	github.com/zeebo/xxh3 v1.0.2
-	go.uber.org/atomic v1.11.0
-	golang.org/x/crypto v0.44.0
+	github.com/zeebo/xxh3 v1.1.0
+	go.uber.org/atomic v1.12.0
+	golang.org/x/crypto v0.58.0
 )
 
 require (
 	github.com/hashicorp/errwrap v1.1.0 // indirect
-	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
-	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
-	golang.org/x/net v0.47.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/text v0.31.0 // indirect
+	github.com/klauspost/cpuid/v2 v2.4.1 // indirect
+	github.com/mattn/go-colorable v0.1.16 // indirect
+	github.com/mattn/go-isatty v0.0.24 // indirect
+	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 )
