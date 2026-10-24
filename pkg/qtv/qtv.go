@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-multierror"
+	"github.com/qw-group/qtv/pkg/filemeta"
 	"github.com/qw-group/qtv/pkg/info"
 	"github.com/qw-group/qtv/pkg/qfs"
 	"github.com/rs/zerolog/log"
@@ -94,8 +95,9 @@ func NewQTV(ctx context.Context, console <-chan string, arguments []string) (qtv
 }
 
 type DemoListItem struct {
-	FileInfo os.FileInfo
-	Hash     Hashes
+	FileInfo   os.FileInfo
+	Hash       Hashes
+	changeTime time.Time // Snapshot taken when the hash was calculated; zero means unavailable.
 }
 
 type Hashes struct {
@@ -319,7 +321,7 @@ func (qtv *QTV) updateDemoList() error {
 	return nil
 }
 
-// Returns demos in demoDir, newest first. Hashes are reused from prev for unchanged files.
+// Returns demos in demoDir, newest first. Hashes are reused only when file metadata is unchanged.
 func buildDemoList(demoDir string, prev []DemoListItem) ([]DemoListItem, error) {
 	f, err := os.Open(demoDir)
 	if err != nil {
@@ -361,8 +363,13 @@ func buildDemoList(demoDir string, prev []DemoListItem) ([]DemoListItem, error) 
 			continue
 		}
 
-		if old, ok := cache[name]; ok && old.FileInfo.Size() == info.Size() && old.FileInfo.ModTime().Equal(info.ModTime()) {
-			demoList = append(demoList, DemoListItem{FileInfo: info, Hash: old.Hash})
+		info, changeTime := filemeta.Snapshot(path, info)
+		// Identity detects replacements; change time also detects in-place writes
+		// whose size and mtime have been preserved. If unavailable in both snapshots,
+		// reuse depends on identity, size and mtime alone.
+		if old, ok := cache[name]; ok && old.changeTime.Equal(changeTime) &&
+			os.SameFile(old.FileInfo, info) && old.FileInfo.Size() == info.Size() && old.FileInfo.ModTime().Equal(info.ModTime()) {
+			demoList = append(demoList, DemoListItem{FileInfo: info, Hash: old.Hash, changeTime: changeTime})
 			continue
 		}
 
@@ -373,7 +380,8 @@ func buildDemoList(demoDir string, prev []DemoListItem) ([]DemoListItem, error) 
 		}
 
 		demoList = append(demoList, DemoListItem{
-			FileInfo: info,
+			FileInfo:   info,
+			changeTime: changeTime,
 			Hash: Hashes{
 				XXH3: hashXXH3,
 			},
