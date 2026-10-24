@@ -30,7 +30,7 @@ const (
 )
 
 const (
-	qwDefaultMasters    = "master.quakeworld.nu master.quakeservers.net qwmaster.fodquake.net"
+	qwDefaultMasters    = "master.quake.world master.quakeservers.net"
 	qwDefaultMasterPort = "27000"
 )
 
