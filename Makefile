@@ -11,5 +11,6 @@ build-escape:
 
 update:
 	go get -u ./...
+	go mod tidy
 
 .PHONY: all build build-race build-escape update
