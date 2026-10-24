@@ -291,18 +291,37 @@ func (qp *qProtocol) readBaseLine(delta bool) error {
 	return nil
 }
 
-func (qp *qProtocol) readStaticSound() error {
+// readStaticSound retains a complete ambient source for late-viewer signon.
+func (qp *qProtocol) readStaticSound(extended bool) error {
+	flags := byte(0)
+	if extended {
+		flags = qp.r.GetByte()
+		if flags & ^byte(staticSoundLargeIndex) != 0 {
+			return errors.New("static sound: unsupported flags")
+		}
+	}
 	if qp.staticSoundCount >= maxStaticSounds {
 		return errors.New("readStaticSound: maxStaticSounds")
 	}
 
-	ss := &qp.staticSound[qp.staticSoundCount]
+	ss := staticSound{}
 	ss.origin[0] = qp.r.GetCoord()
 	ss.origin[1] = qp.r.GetCoord()
 	ss.origin[2] = qp.r.GetCoord()
-	ss.soundIndex = qp.r.GetByte()
+	if flags&staticSoundLargeIndex != 0 {
+		ss.soundIndex = qp.r.GetUint16()
+	} else {
+		ss.soundIndex = uint16(qp.r.GetByte())
+	}
 	ss.volume = qp.r.GetByte()
 	ss.attenuation = qp.r.GetByte()
+	if qp.r.error {
+		return errors.New("static sound: truncated payload")
+	}
+	if ss.soundIndex >= maxSounds {
+		return errors.New("static sound: sound index overflow")
+	}
+	qp.staticSound[qp.staticSoundCount] = ss
 	qp.staticSoundCount++
 	return nil
 }
@@ -1060,7 +1079,9 @@ func (qp *qProtocol) readMessageForSvc() error {
 	case svc_foundsecret:
 		return nil
 	case svc_spawnstaticsound:
-		return qp.readStaticSound()
+		return qp.readStaticSound(false)
+	case svc_fte_spawnstaticsound2:
+		return qp.readStaticSound(true)
 	case svc_intermission:
 		return qp.readInterMission()
 	case svc_finale:
