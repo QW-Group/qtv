@@ -183,18 +183,35 @@ func (qp *qProtocol) putStaticSounds(msg *netMsgW, cursize int, maxbuffersize in
 	}
 
 	for ; i < maxStaticSounds; i++ {
-		if msg.wPos+cursize+16 > maxbuffersize {
-			return i
-		}
 		if qp.staticSound[i].soundIndex == 0 {
 			continue
 		}
+		extended := qp.staticSound[i].soundIndex > 255
+		recordSize := 10 // Legacy opcode, three fixed coords, ID, volume, attenuation.
+		if msg.floatCoord {
+			recordSize += 6
+		}
+		if extended {
+			recordSize += 2 // Flags byte and the extra sound-index byte.
+		}
+		if msg.wPos+cursize+recordSize > maxbuffersize {
+			return i
+		}
 
-		msg.PutSVC(svc_spawnstaticsound)
+		if extended {
+			msg.PutSVC(svc_fte_spawnstaticsound2)
+			msg.PutByte(staticSoundLargeIndex)
+		} else {
+			msg.PutSVC(svc_spawnstaticsound)
+		}
 		msg.PutCoord(qp.staticSound[i].origin[0])
 		msg.PutCoord(qp.staticSound[i].origin[1])
 		msg.PutCoord(qp.staticSound[i].origin[2])
-		msg.PutByte(qp.staticSound[i].soundIndex)
+		if extended {
+			msg.PutUint16(qp.staticSound[i].soundIndex)
+		} else {
+			msg.PutByte(byte(qp.staticSound[i].soundIndex))
+		}
 		msg.PutByte(qp.staticSound[i].volume)
 		msg.PutByte(qp.staticSound[i].attenuation)
 	}

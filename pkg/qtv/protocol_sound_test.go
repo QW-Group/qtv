@@ -18,6 +18,80 @@ func soundTestProtocol() *qProtocol {
 	return qp
 }
 
+// staticSoundWire uses literal protocol bytes independently of reader/writer constants.
+func staticSoundWire(floats bool, flags byte, sound uint16) []byte {
+	wire := []byte{94, flags}
+	for _, coord := range []float32{1, -2, 3} {
+		if floats {
+			wire = binary.LittleEndian.AppendUint32(wire, math.Float32bits(coord))
+		} else {
+			wire = binary.LittleEndian.AppendUint16(wire, uint16(int16(coord*8)))
+		}
+	}
+	if flags&1 != 0 {
+		wire = binary.LittleEndian.AppendUint16(wire, sound)
+	} else {
+		wire = append(wire, byte(sound))
+	}
+	return append(wire, 128, 64)
+}
+
+// TestStaticSoundExtended checks payload boundaries, retained IDs and exact writer budgets.
+func TestStaticSoundExtended(t *testing.T) {
+	for _, bits := range []uint32{0, 0x80, 0x8000, 0x8080} {
+		floats := bits&0x8000 != 0
+		for _, sound := range []uint16{255, 256, 4095} {
+			for _, flags := range []byte{0, 1} {
+				if flags == 0 && sound > 255 {
+					continue
+				}
+				wire := staticSoundWire(floats, flags, sound)
+				qp := soundTestProtocol()
+				qp.extFlagsFTE1 = bits
+				if err := qp.readMessage(append(append([]byte(nil), wire...), 32, 7), mvdMsgRead, playersMaskAll); err != nil {
+					t.Fatal(err)
+				}
+				if qp.cdTrack != 7 || qp.staticSoundCount != 1 || uint16(qp.staticSound[0].soundIndex) != sound {
+					t.Fatalf("bad retained sound or next svc: %+v", qp.staticSound[0])
+				}
+				want := staticSoundWire(floats, 1, sound)
+				if sound <= 255 {
+					want = append([]byte{29}, staticSoundWire(floats, 0, sound)[2:]...)
+				}
+				for _, spare := range []int{-1, 0} {
+					msg := newNetMsgW(make([]byte, 64), floats)
+					msg.PutByte(1) // Existing message data and a separate caller offset both count.
+					next := qp.putStaticSounds(msg, 3, 4+len(want)+spare, 0)
+					if spare < 0 {
+						if next != 0 || msg.wPos != 1 {
+							t.Fatal("record exceeded budget")
+						}
+					} else if next != maxStaticSounds || !bytes.Equal(msg.Bytes()[1:], want) {
+						t.Fatalf("writer lost sound ID or used wrong record size: %x want %x", msg.Bytes()[1:], want)
+					}
+				}
+				for end := 1; end < len(wire); end++ {
+					bad := soundTestProtocol()
+					bad.extFlagsFTE1 = bits
+					if err := bad.readMessage(wire[:end], mvdMsgRead, playersMaskAll); err == nil || bad.staticSoundCount != 0 {
+						t.Fatalf("accepted/retained truncated static sound at %d", end)
+					}
+				}
+			}
+		}
+		for _, invalid := range [][]byte{
+			staticSoundWire(floats, 1, 4096), staticSoundWire(floats, 1, 65535),
+			staticSoundWire(floats, 2, 255), staticSoundWire(floats, 16, 255),
+		} {
+			qp := soundTestProtocol()
+			qp.extFlagsFTE1 = bits
+			if err := qp.readMessage(invalid, mvdMsgRead, playersMaskAll); err == nil || qp.staticSoundCount != 0 {
+				t.Fatal("accepted invalid static sound")
+			}
+		}
+	}
+}
+
 // TestSoundExtendedParsing checks independent literal wire packets and the following svc.
 func TestSoundExtendedParsing(t *testing.T) {
 	for _, floats := range []bool{false, true} {
@@ -236,10 +310,11 @@ func TestSoundMapReset(t *testing.T) {
 	qtv.qvs.Reg("parse_delay", "0")
 	qp := soundTestProtocol()
 	qp.us = &uStream{qtv: qtv, state: usActive, qp: qp}
-	for _, extended := range []bool{false, true, false} {
+	for _, bits := range []uint32{0, 0x80, 0, 0x8000, 0x8080, 0} {
 		wire := []byte{11} // svc_serverdata.
-		if extended {
-			wire = append(wire, 'F', 'T', 'E', 'X', 128, 0, 0, 0)
+		if bits != 0 {
+			wire = append(wire, 'F', 'T', 'E', 'X')
+			wire = binary.LittleEndian.AppendUint32(wire, bits)
 		}
 		wire = append(wire, 28, 0, 0, 0, 1, 0, 0, 0, 'q', 'w', 0)
 		wire = append(wire, 0, 0, 0, 0, 'm', 'a', 'p', 0)
@@ -247,21 +322,48 @@ func TestSoundMapReset(t *testing.T) {
 		if err := qp.readMessage(wire, mvdMsgRead, playersMaskAll); err != nil {
 			t.Fatal(err)
 		}
-		if (qp.extFlagsFTE1&0x80 != 0) != extended || qp.soundList[4095] != "" {
-			t.Fatalf("extended=%v: flags=%x stale sound=%q", extended, qp.extFlagsFTE1, qp.soundList[4095])
+		if qp.extFlagsFTE1 != bits || qp.soundList[4095] != "" || qp.staticSoundCount != 0 || qp.staticSound[0].soundIndex != 0 {
+			t.Fatalf("bits=%x: flags=%x stale sound=%q", bits, qp.extFlagsFTE1, qp.soundList[4095])
 		}
 		qp.soundList[4095] = "previous-map.wav"
+		ambient := staticSoundWire(bits&0x8000 != 0, 1, 4095)
+		if err := qp.readMessage(ambient, mvdMsgRead, playersMaskAll); err != nil {
+			t.Fatal(err)
+		}
+		if qp.extFlagsFTE1 != bits || qp.staticSoundCount != 1 || qp.staticSound[0].soundIndex != 4095 {
+			t.Fatal("static sound changed extension bits or lost the current source")
+		}
 	}
 }
 
 // TestLateViewerSoundCatalog exercises both production initial/soundlist signon paths.
 func TestLateViewerSoundCatalog(t *testing.T) {
-	for _, extensions := range []uint32{0, qtvEzQuakeExtDownload} {
-		t.Run(fmt.Sprint(extensions), func(t *testing.T) {
-			ds := soundTestDownstream(512*1024, 4095)
+	for _, test := range []struct {
+		extensions uint32 // Downstream signon mode.
+		bits       uint32 // Advertised upstream extensions, possibly without SOUNDDBL.
+	}{{0, 0}, {qtvEzQuakeExtDownload, 0}, {0, 0x80}, {qtvEzQuakeExtDownload, 0x80},
+		{0, 0x8000}, {qtvEzQuakeExtDownload, 0x8000}, {0, 0x8080}, {qtvEzQuakeExtDownload, 0x8080}} {
+		t.Run(fmt.Sprint(test), func(t *testing.T) {
+			extensions := test.extensions
+			floats := test.bits&0x8000 != 0
+			count := 4095
+			if test.bits&0x80 == 0 {
+				count = 255 // Catalog negotiation is unchanged; only opcode 94 is permissive.
+			}
+			ds := soundTestDownstream(512*1024, count)
 			ds.state = dsNeedInitialData
 			ds.qtvEzQuakeExt = extensions
 			us := ds.linkedUs
+			us.qp.extFlagsFTE1 = test.bits
+			ambient := staticSoundWire(floats, 1, uint16(count))
+			if err := us.qp.readMessage(ambient, mvdMsgRead, playersMaskAll); err != nil {
+				t.Fatal(err)
+			}
+			us.qp.w.floatCoord = floats
+			wantAmbient := ambient
+			if count <= 255 {
+				wantAmbient = append([]byte{29}, staticSoundWire(floats, 0, uint16(count))[2:]...)
+			}
 			us.serverCount = 1
 			us.mu.Lock()
 			defer us.mu.Unlock()
@@ -276,11 +378,21 @@ func TestLateViewerSoundCatalog(t *testing.T) {
 				if err := ds.soundListClientCmd(&command); err != nil || ds.state != dsNeedModelList {
 					t.Fatalf("soundlist reply: %v state=%v", err, ds.state)
 				}
+				command, _ = tokenizeString("qtvmodellist 1")
+				if err := ds.modelListClientCmd(&command); err != nil {
+					t.Fatal(err)
+				}
+				command, _ = tokenizeString("qtvspawn 1")
+				if err := ds.spawnClientCmd(&command); err != nil || ds.state != dsActive {
+					t.Fatalf("spawn reply: %v state=%v", err, ds.state)
+				}
 			} else if ds.state != dsActive {
 				t.Fatalf("legacy signon state=%v", ds.state)
 			}
 			// Decode only catalog MVD records independently of the production reader.
 			catalog := make([]string, 4096)
+			foundAmbient := false
+			foundServerData := false
 			data := ds.wb.BytesOneReader()
 			for len(data) != 0 {
 				if len(data) < 6 {
@@ -296,6 +408,17 @@ func TestLateViewerSoundCatalog(t *testing.T) {
 					continue // Initial state may contain an empty MVD record.
 				}
 				if body[0] != 46 && body[0] != 56 {
+					if body[0] == 11 {
+						advertised := uint32(0)
+						if binary.LittleEndian.Uint32(body[1:5]) == 0x58455446 { // FTEX.
+							advertised = binary.LittleEndian.Uint32(body[5:9])
+						}
+						if advertised != test.bits {
+							t.Fatalf("late viewer extension bits changed: %x want %x", advertised, test.bits)
+						}
+						foundServerData = true
+					}
+					foundAmbient = foundAmbient || bytes.Contains(body, wantAmbient)
 					continue
 				}
 				cursor := int(body[1])
@@ -323,6 +446,9 @@ func TestLateViewerSoundCatalog(t *testing.T) {
 					catalog[cursor] = string(body[:end])
 					body = body[end+1:]
 				}
+			}
+			if !foundServerData || !foundAmbient {
+				t.Fatal("late viewer lost serverdata or ambient ID")
 			}
 			for i := 1; i < len(catalog); i++ {
 				if catalog[i] != us.qp.soundList[i] {

@@ -159,7 +159,7 @@ type entityState struct {
 
 type staticSound struct {
 	origin      [3]float32
-	soundIndex  byte
+	soundIndex  uint16 // Full catalog ID, including SOUNDDBL indices above 255.
 	volume      byte
 	attenuation byte
 }
@@ -200,7 +200,7 @@ const (
 
 const (
 	ftePextTrans        uint32 = 0x00000008 // Extra 8 bit with alpha in delta if changed
-	ftePextSoundDbl     uint32 = 0x00000080 // Extended sound events and 16-bit sound-list cursors.
+	ftePextSoundDbl     uint32 = 0x00000080 // Extended dynamic/static sounds and 16-bit sound-list cursors.
 	ftePextModelDbl     uint32 = 0x00001000 // Up to uint16 model indices
 	ftePextEntityDbl    uint32 = 0x00002000 // Up to 1024 entity indices
 	ftePextEntityDbl2   uint32 = 0x00004000 // Up to 2048 entity indices
@@ -354,4 +354,10 @@ const (
 	svc_unused_82
 	svc_unused_83
 	svc_fte_voicechat
+)
+
+// SOUNDDBL static sounds have a separate flags byte; only bit 0 widens the ID.
+const (
+	svc_fte_spawnstaticsound2 protocolSvc = 94
+	staticSoundLargeIndex                 = 1
 )
