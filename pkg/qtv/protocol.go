@@ -53,6 +53,7 @@ type protocolReaderData struct {
 	extFlagsFTE1     uint32
 	extFlagsFTE2     uint32
 	extFlagsMVD1     uint32
+	clientSlots      byte // Slot count announced in serverdata when PEXT2_MAXPLAYERS is set; see playerSlots.
 	gameDir          string
 	mapName          string
 	moveVars         moveVars
@@ -79,6 +80,14 @@ type protocolReaderData struct {
 
 func (pd *protocolReaderData) reset() {
 	*pd = protocolReaderData{}
+}
+
+// playerSlots returns how many player numbers the current map may use.
+func (pd *protocolReaderData) playerSlots() int {
+	if pd.extFlagsFTE2&ftePext2MaxPlayers != 0 {
+		return int(pd.clientSlots)
+	}
+	return qwMaxClients
 }
 
 type playerInfo struct {
@@ -171,7 +180,8 @@ const (
 )
 
 const (
-	maxClients            = 32
+	maxClients            = 255 // FTE's absolute limit with PEXT2_MAXPLAYERS; player numbers stay single bytes.
+	qwMaxClients          = 32  // Vanilla limit, also all that MVD message targets and player masks can address.
 	maxList               = 256
 	maxModels             = maxEntities + maxStaticEntities // Could be max uint16, but stay with static + baseline entity limit
 	maxSounds             = 4096                            // Artificial limit matching MVDSV; slot zero is reserved.
@@ -207,6 +217,10 @@ const (
 	ftePextFloatCoords  uint32 = 0x00008000
 	ftePextColourmod    uint32 = 0x00080000 // Extra 24 bit color in delta if changed
 	ftePextSpawnStatic2 uint32 = 0x00400000 // Sends an entity delta instead of a baseline (or spawnstatic). Obsoleted by PEXT2_REPLACEMENTDELTAS.
+)
+
+const (
+	ftePext2MaxPlayers uint32 = 0x00000010 // Up to 255 player slots, serverdata announces the slot count.
 )
 
 const (

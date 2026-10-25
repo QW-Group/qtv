@@ -552,7 +552,7 @@ func (ds *dStream) ptrackClientCmd(tr *tokenizerResult) (err error) {
 	}
 
 	slot := tr.ArgvAtoi(1)
-	if slot < 0 || slot >= maxClients {
+	if slot < 0 || slot >= ds.linkedUs.qp.playerSlots() {
 		return ds.svcPrintf(printHigh, "Invalid client to track: %v\n", slot)
 	}
 	ds.pov.Set(slot)

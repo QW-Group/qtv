@@ -25,6 +25,10 @@ func (qp *qProtocol) sendServerData(ds *dStream) error {
 
 	msg.PutString(qp.us.gameDir())
 
+	if qp.extFlagsFTE2&ftePext2MaxPlayers != 0 {
+		msg.PutByte(qp.clientSlots)
+	}
+
 	msg.PutFloat32(0)
 	msg.PutString(qp.mapName)
 
@@ -90,14 +94,15 @@ func (qp *qProtocol) sendList(ds *dStream, list []string, svc protocolSvc, svcEx
 }
 
 func (qp *qProtocol) putUserInfos(msg *netMsgW, cursize int, maxbuffersize int, i int) int {
+	slots := qp.playerSlots()
 	if i < 0 {
 		return i
 	}
-	if i >= maxClients {
+	if i >= slots {
 		return i
 	}
 
-	for ; i < maxClients; i++ {
+	for ; i < slots; i++ {
 		ui := qp.players[i].userInfo.String()
 
 		if msg.wPos+cursize+len(ui) > maxbuffersize {
@@ -251,7 +256,7 @@ func (qp *qProtocol) putPreSpawn(msg *netMsgW, curmsgsize int, bufnum int) int {
 	ni := qp.putUserInfos(msg, curmsgsize, 768, bufnum)
 	r += ni - bufnum
 	bufnum = ni
-	bufnum -= maxClients
+	bufnum -= qp.playerSlots()
 
 	ni = qp.putBaseLines(msg, curmsgsize, 768, bufnum)
 	r += ni - bufnum
@@ -491,7 +496,8 @@ func (qp *qProtocol) sendPlayerStats(ds *dStream) error {
 
 	sentTimes := false
 
-	for i := 0; i < maxClients; i++ {
+	// MVD stats target a player with 5 bits, so slots past 32 can't receive them.
+	for i := 0; i < qwMaxClients; i++ {
 		client := &qp.players[i]
 		if !client.isPlayer() {
 			continue
