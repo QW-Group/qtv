@@ -3,6 +3,8 @@ package qtv
 import (
 	"bytes"
 	"context"
+	"crypto/sha512"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -681,7 +683,7 @@ func (us *uStream) sendAuth(authMethod string, challenge string) (err error) {
 
 	switch authMethod {
 	case "": // Auth is empty, send all supported AUTH methods to remote server.
-		return us.sendPrint("AUTH: SHA3_512\n", "AUTH: PLAIN\n", "AUTH: NONE\n")
+		return us.sendPrint("AUTH: SHA3_512\n", "AUTH: SHA2_512\n", "AUTH: PLAIN\n", "AUTH: NONE\n")
 	case "PLAIN":
 		return us.sendPrintf("AUTH: %v\nPASSWORD: \"%v\"\n", authMethod, pass)
 	case "SHA3_512":
@@ -690,6 +692,13 @@ func (us *uStream) sendAuth(authMethod string, challenge string) (err error) {
 		}
 		hash := sha3.Sum512([]byte(challenge + pass))
 		return us.sendPrintf("AUTH: %v\nPASSWORD: \"%x\"\n", authMethod, hash)
+	case "SHA2_512":
+		// FTE sends a shorter challenge than mvdsv and expects the digest in standard base64 rather than hex.
+		if challenge == "" {
+			return fmt.Errorf("invalid challenge for auth method %v", authMethod)
+		}
+		hash := sha512.Sum512([]byte(challenge + pass))
+		return us.sendPrintf("AUTH: %v\nPASSWORD: \"%v\"\n", authMethod, base64.StdEncoding.EncodeToString(hash[:]))
 	case "NONE":
 		return us.sendPrintf("AUTH: %v\nPASSWORD: \n", authMethod)
 	default:
