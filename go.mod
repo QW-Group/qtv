@@ -4,6 +4,7 @@ go 1.27.0
 
 require (
 	github.com/adam-lavrik/go-imath v0.0.0-20210910152346-265a42a96f0b
+	github.com/coder/websocket v1.8.15
 	github.com/gorilla/mux v1.8.1
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/markphelps/optional v0.11.0
