@@ -253,7 +253,9 @@ type rdFrame struct {
 type rdWorld struct {
 	current, baselines       []rdEntityState // Slot-indexed current values and signon baselines.
 	present, baselinePresent []bool          // Occupancy is independent of model index.
+	baselineClassic          []bool          // Classic signon must keep its inherited angle semantics.
 	statics                  []rdEntityState // Accepted unnumbered signon records in source order.
+	staticClassic            []bool          // Encoding form of each retained static record.
 	ready                    bool            // A source world reset has been accepted for this map.
 	time                     float32         // Time of the last accepted RD message.
 }
@@ -265,6 +267,7 @@ func (w *rdWorld) ensureStorage() {
 		w.baselines = make([]rdEntityState, maxRDEntities)
 		w.present = make([]bool, maxRDEntities)
 		w.baselinePresent = make([]bool, maxRDEntities)
+		w.baselineClassic = make([]bool, maxRDEntities)
 	}
 }
 

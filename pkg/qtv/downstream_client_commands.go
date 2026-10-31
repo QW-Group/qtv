@@ -297,6 +297,11 @@ func (ds *dStream) spawnClientCmd(tr *tokenizerResult) (err error) {
 		return ds.setState(dsNeedInitialData)
 	}
 
+	// A map can finish metadata signon before its first RD world reset arrives.
+	if us.qp.usesRD() && (us.qp.rd == nil || !us.qp.rd.ready) {
+		return ds.setState(dsNeedInitialData)
+	}
+
 	if err := us.qp.sendPreSpawn(ds); err != nil {
 		return err
 	}

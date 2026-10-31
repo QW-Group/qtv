@@ -321,11 +321,13 @@ func (qp *qProtocol) readRDSignon(delta, numbered bool) error {
 	if numbered {
 		w.baselines[s.number] = s
 		w.baselinePresent[s.number] = true
+		w.baselineClassic[s.number] = !delta
 	} else {
 		if len(w.statics) >= maxStaticEntities {
 			return errors.New("too many RD statics")
 		}
 		w.statics = append(w.statics, s)
+		w.staticClassic = append(w.staticClassic, !delta)
 	}
 	return nil
 }
