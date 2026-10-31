@@ -44,6 +44,9 @@ func (qp *qProtocol) readServerData() (err error) {
 		break
 	}
 
+	if qp.usesRD() && (qp.extFlagsFTE2 & ^uint32(ftePext2ReplacementDeltas|ftePext2VoiceChat) != 0 || qp.extFlagsFTE1&ftePextCSQC != 0) {
+		return errors.New("unsupported RD profile in serverdata")
+	}
 	qp.r.floatCoord = ((qp.extFlagsFTE1 & ftePextFloatCoords) != 0)
 	qp.w.floatCoord = qp.r.floatCoord
 
@@ -272,6 +275,9 @@ func (qp *qProtocol) readEntityState(es *entityState) {
 }
 
 func (qp *qProtocol) readBaseLine(delta bool) error {
+	if qp.usesRD() {
+		return qp.readRDSignon(delta, true)
+	}
 	if delta {
 		if (qp.extFlagsFTE1 & ftePextSpawnStatic2) == 0 {
 			return errors.New("readBaseLine: (delta) ftePextSpawnStatic2 flag is not set")
@@ -337,6 +343,9 @@ func (qp *qProtocol) readInterMission() error {
 }
 
 func (qp *qProtocol) readSpawnStatic(delta bool) error {
+	if qp.usesRD() {
+		return qp.readRDSignon(delta, false)
+	}
 	if delta && (qp.extFlagsFTE1&ftePextSpawnStatic2) == 0 {
 		return fmt.Errorf("readSpawnStatic: (delta = %v) ftePextSpawnStatic2 flag is not set", delta)
 	}
@@ -684,7 +693,7 @@ func (qp *qProtocol) readSound() error {
 // readSoundExtended consumes the FTE/NQ event layout without translating the forwarded bytes.
 // Unlike svc_sound, its flags are separate from entity/channel and select optional fields.
 func (qp *qProtocol) readSoundExtended() error {
-	if qp.extFlagsFTE1&ftePextSoundDbl == 0 {
+	if qp.extFlagsFTE1&ftePextSoundDbl == 0 && !qp.usesRD() {
 		return errors.New("soundextended without SOUNDDBL")
 	}
 	const (
@@ -722,7 +731,13 @@ func (qp *qProtocol) readSoundExtended() error {
 	if flags&sndSpeed != 0 {
 		qp.r.GetUint16()
 	}
-	qp.r.GetUint16() // Packed entity/channel, or a separate entity followed by channel.
+	if qp.usesRD() && flags&sndLargeEntity != 0 {
+		if _, err := readRDEntityRef(qp.r); err != nil {
+			return err
+		}
+	} else {
+		qp.r.GetUint16() // Packed entity/channel, or a separate legacy entity.
+	}
 	if flags&sndLargeEntity != 0 {
 		qp.r.GetByte()
 	}
@@ -790,6 +805,7 @@ func (qp *qProtocol) readTempEntity() error {
 		qp.r.GetCoord()
 		qp.r.GetCoord()
 	case teLightning1, teLightning2, teLightning3:
+		// Beam IDs include negative aliases and retain their 16-bit wire format.
 		qp.r.GetUint16()
 		qp.r.GetCoord()
 		qp.r.GetCoord()
@@ -924,8 +940,8 @@ func (qp *qProtocol) readFinale() error {
 }
 
 func (qp *qProtocol) readMuzzleFlash() error {
-	qp.r.GetUint16()
-	return nil
+	_, err := qp.readEventEntity()
+	return err
 }
 
 func (qp *qProtocol) readChokeCount() error {
@@ -998,7 +1014,7 @@ func (qp *qProtocol) fixEmptyMapName() {
 // readSoundList applies the current map's negotiated sound limit to either cursor width.
 func (qp *qProtocol) readSoundList(extended bool) error {
 	list := qp.soundList[:]
-	if qp.extFlagsFTE1&ftePextSoundDbl == 0 {
+	if qp.extFlagsFTE1&ftePextSoundDbl == 0 && !qp.usesRD() {
 		if extended {
 			return errors.New("soundlistshort without SOUNDDBL")
 		}
@@ -1068,6 +1084,11 @@ func (qp *qProtocol) readMessageForSvc() error {
 		return qp.readBaseLine(false)
 	case svc_fte_spawnbaseline2:
 		return qp.readBaseLine(true)
+	case svc_fte_updateentities:
+		if !qp.usesRD() {
+			return errors.New("updateentities without RD")
+		}
+		return qp.readRDUpdate()
 	case svc_temp_entity:
 		return qp.readTempEntity()
 	case svc_setpause:

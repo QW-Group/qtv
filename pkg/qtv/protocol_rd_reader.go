@@ -250,3 +250,90 @@ func readRDBaseline(msg *netMsgR, numbered, floatCoords bool) (rdEntityState, er
 	s.number = n
 	return s, nil
 }
+
+// usesRD follows the format of this map, never a viewer's download capability.
+func (qp *qProtocol) usesRD() bool { return qp.extFlagsFTE2&ftePext2ReplacementDeltas != 0 }
+
+// rdFloatCoords includes MVD's entity-only coordinate override.
+func (qp *qProtocol) rdFloatCoords() bool {
+	return qp.extFlagsFTE1&ftePextFloatCoords != 0 || qp.extFlagsMVD1&mvdPext1FloatCoords != 0
+}
+
+// ensureRD creates the sole source-owned state, allocated only for an RD map.
+func (qp *qProtocol) ensureRD() *rdWorld {
+	if qp.rd == nil {
+		qp.rd = &rdWorld{}
+	}
+	qp.rd.ensureStorage()
+	return qp.rd
+}
+
+// readRDUpdate applies one complete validated message without a legacy projection.
+func (qp *qProtocol) readRDUpdate() error {
+	f, err := readRDFrame(qp.r, qp.rdFloatCoords())
+	if err != nil {
+		return err
+	}
+	for _, u := range f.updates {
+		if int(u.delta.state.modelIndex) >= len(qp.modelList) || int(u.delta.state.modelIndex2) >= len(qp.modelList) {
+			return errors.New("RD model index exceeds resource capacity")
+		}
+	}
+	return qp.ensureRD().apply(f)
+}
+
+// readRDSignon accepts RD payloads and the legacy baseline/static form allowed by FTE.
+func (qp *qProtocol) readRDSignon(delta, numbered bool) error {
+	var s rdEntityState
+	var err error
+	if delta {
+		s, err = readRDBaseline(qp.r, numbered, qp.rdFloatCoords())
+	} else {
+		s = defaultRDState()
+		if numbered {
+			s.number = uint32(qp.r.GetUint16())
+		}
+		s.modelIndex = uint16(qp.r.GetByte())
+		s.frame = uint16(qp.r.GetByte())
+		s.colorMap = qp.r.GetByte()
+		s.skinNum = int16(qp.r.GetByte())
+		for i := range 3 {
+			// Classic signon uses ordinary primitives, not MVD's RD-only override.
+			s.origin[i] = qp.r.GetCoord()
+			s.angles[i] = qp.r.GetAngle()
+		}
+		if qp.r.error || s.number >= maxRDEntities {
+			err = errors.New("invalid legacy RD signon record")
+		}
+	}
+	if err != nil {
+		return err
+	}
+	for _, v := range s.origin {
+		if !finiteRD(v) {
+			return errors.New("nonfinite RD signon coordinate")
+		}
+	}
+	if int(s.modelIndex) >= len(qp.modelList) || int(s.modelIndex2) >= len(qp.modelList) {
+		return errors.New("RD model index exceeds resource capacity")
+	}
+	w := qp.ensureRD()
+	if numbered {
+		w.baselines[s.number] = s
+		w.baselinePresent[s.number] = true
+	} else {
+		if len(w.statics) >= maxStaticEntities {
+			return errors.New("too many RD statics")
+		}
+		w.statics = append(w.statics, s)
+	}
+	return nil
+}
+
+// readEventEntity consumes an ordinary entity reference with the current wire profile.
+func (qp *qProtocol) readEventEntity() (uint32, error) {
+	if qp.usesRD() {
+		return readRDEntityRef(qp.r)
+	}
+	return uint32(qp.r.GetUint16()), nil
+}
