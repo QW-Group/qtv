@@ -80,6 +80,12 @@ func (msg *netMsgR) GetInt16() int16 {
 	return int16(msg.GetUint16())
 }
 
+// Ordinary FTE entity references reserve one short bit for their extra byte.
+const (
+	fteEntityRefExtend    = 0x8000
+	fteEntityRefShortMask = 0x7fff
+)
+
 // GetFTEUint64 reads FTE's leading-one length prefix, followed by big-endian payload bytes.
 // This is not LEB128: 0xxxxxxx is one byte, 10xxxxxx adds one byte, up to ff plus eight bytes.
 func (msg *netMsgR) GetFTEUint64() uint64 {
