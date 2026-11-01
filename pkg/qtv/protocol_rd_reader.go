@@ -16,7 +16,14 @@ func readRDEntityRef(msg *netMsgR) (uint32, error) {
 
 // readRDDelta decodes one base-profile payload without mutating retained state.
 func readRDDelta(msg *netMsgR, floatCoords bool) (rdDelta, error) {
-	d := rdDelta{bits: uint32(msg.GetByte())}
+	var d rdDelta
+	err := readRDDeltaInto(msg, floatCoords, &d)
+	return d, err
+}
+
+// readRDDeltaInto fills one caller-owned record; no state is published here.
+func readRDDeltaInto(msg *netMsgR, floatCoords bool, d *rdDelta) error {
+	*d = rdDelta{bits: uint32(msg.GetByte())}
 	if d.bits&rdExtend1 != 0 {
 		d.bits |= uint32(msg.GetByte()) << 8
 	}
@@ -27,7 +34,7 @@ func readRDDelta(msg *netMsgR, floatCoords bool) (rdDelta, error) {
 		d.bits |= uint32(msg.GetByte()) << 24
 	}
 	if msg.error || d.bits&(rdBoneData|rdUnused|rdExtend4) != 0 {
-		return d, errors.New("unsupported or truncated RD flags")
+		return errors.New("unsupported or truncated RD flags")
 	}
 	b := d.bits
 	s := &d.state
@@ -136,7 +143,7 @@ func readRDDelta(msg *netMsgR, floatCoords bool) (rdDelta, error) {
 		var err error
 		s.tagEntity, err = readRDEntityRef(msg)
 		if err != nil {
-			return d, err
+			return err
 		}
 		s.tagIndex = msg.GetByte()
 	}
@@ -176,14 +183,14 @@ func readRDDelta(msg *netMsgR, floatCoords bool) (rdDelta, error) {
 		s.gravityDir = [2]byte{msg.GetByte(), msg.GetByte()}
 	}
 	if msg.error {
-		return d, errors.New("truncated RD payload")
+		return errors.New("truncated RD payload")
 	}
 	for _, v := range s.origin {
 		if !finiteRD(v) {
-			return d, errors.New("nonfinite RD coordinate")
+			return errors.New("nonfinite RD coordinate")
 		}
 	}
-	return d, nil
+	return nil
 }
 
 // readRDFrameInto reuses scratch; its returned records are valid until the next reuse.
@@ -220,15 +227,15 @@ func readRDFrameInto(msg *netMsgR, floatCoords bool, updates []rdUpdate) (rdFram
 			return f, errors.New("invalid RD update index or order")
 		}
 		last = n
-		u := rdUpdate{number: n, remove: remove}
+		f.updates = append(f.updates, rdUpdate{number: n, remove: remove})
+		u := &f.updates[len(f.updates)-1]
 		if !remove {
-			var err error
-			u.delta, err = readRDDelta(msg, floatCoords)
-			if err != nil {
+			if err := readRDDeltaInto(msg, floatCoords, &u.delta); err != nil {
+				// Preserve the original contract: return only completed records.
+				f.updates = f.updates[:len(f.updates)-1]
 				return f, err
 			}
 		}
-		f.updates = append(f.updates, u)
 	}
 }
 
@@ -277,7 +284,8 @@ func (qp *qProtocol) readRDUpdate() error {
 	if err != nil {
 		return err
 	}
-	for _, u := range f.updates {
+	for i := range f.updates {
+		u := &f.updates[i]
 		if int(u.delta.state.modelIndex) >= len(qp.modelList) || int(u.delta.state.modelIndex2) >= len(qp.modelList) {
 			return errors.New("RD model index exceeds resource capacity")
 		}

@@ -115,7 +115,7 @@ type rdDelta struct {
 }
 
 // apply resolves inheritance, resetting transient prediction fields on each update.
-func (d rdDelta) apply(old, baseline *rdEntityState) rdEntityState {
+func (d *rdDelta) apply(old, baseline *rdEntityState) rdEntityState {
 	s := defaultRDState()
 	if d.bits&rdReset != 0 {
 		if baseline != nil {
@@ -124,7 +124,7 @@ func (d rdDelta) apply(old, baseline *rdEntityState) rdEntityState {
 	} else if old != nil {
 		s = *old
 	}
-	v := d.state
+	v := &d.state
 	b := d.bits
 	if b&rdFrameBit != 0 {
 		s.frame = v.frame
@@ -280,7 +280,8 @@ func (w *rdWorld) apply(f rdFrame) error {
 		return errors.New("RD update requires a finite time and an initial reset")
 	}
 	last := uint32(0)
-	for _, u := range f.updates {
+	for i := range f.updates {
+		u := &f.updates[i]
 		if u.number == 0 || u.number >= maxRDEntities || u.number <= last {
 			return errors.New("invalid RD entity order or index")
 		}
@@ -303,7 +304,8 @@ func (w *rdWorld) apply(f rdFrame) error {
 	if f.reset {
 		clear(w.present)
 	}
-	for _, u := range f.updates {
+	for i := range f.updates {
+		u := &f.updates[i]
 		id := u.number
 		if u.remove {
 			w.present[id] = false
