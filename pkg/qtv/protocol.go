@@ -76,6 +76,7 @@ type protocolReaderData struct {
 	// qqshka: above comment valid only if upstream connected to server before match start.
 	matchStartTime      uint64
 	matchStartLocalTime uint64
+	rdUpdates           []rdUpdate // Source-owned decode scratch, released on map reset; unused by legacy streams.
 }
 
 func (pd *protocolReaderData) reset() {

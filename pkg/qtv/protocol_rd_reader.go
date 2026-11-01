@@ -186,9 +186,9 @@ func readRDDelta(msg *netMsgR, floatCoords bool) (rdDelta, error) {
 	return d, nil
 }
 
-// readRDFrame consumes one complete updateentities stream, including its terminator.
-func readRDFrame(msg *netMsgR, floatCoords bool) (rdFrame, error) {
-	f := rdFrame{time: msg.GetFloat32()}
+// readRDFrameInto reuses scratch; its returned records are valid until the next reuse.
+func readRDFrameInto(msg *netMsgR, floatCoords bool, updates []rdUpdate) (rdFrame, error) {
+	f := rdFrame{time: msg.GetFloat32(), updates: updates[:0]}
 	if !finiteRD(f.time) {
 		return f, errors.New("nonfinite RD time")
 	}
@@ -270,7 +270,10 @@ func (qp *qProtocol) ensureRD() *rdWorld {
 
 // readRDUpdate applies one complete validated message without a legacy projection.
 func (qp *qProtocol) readRDUpdate() error {
-	f, err := readRDFrame(qp.r, qp.rdFloatCoords())
+	f, err := readRDFrameInto(qp.r, qp.rdFloatCoords(), qp.rdUpdates)
+	// Keep capacity even on failure. Only a complete, validated frame is applied
+	// synchronously below; retained state never aliases these scalar records.
+	qp.rdUpdates = f.updates[:0]
 	if err != nil {
 		return err
 	}
