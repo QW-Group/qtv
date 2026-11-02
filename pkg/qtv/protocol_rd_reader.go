@@ -2,12 +2,9 @@ package qtv
 
 import "errors"
 
-// readRDEntityRef reads ordinary FTE references, not RD's 14-bit update header.
+// readRDEntityRef reads ordinary FTE references bounded to the retained RD world.
 func readRDEntityRef(msg *netMsgR) (uint32, error) {
-	n := uint32(msg.GetUint16())
-	if n&fteEntityRefExtend != 0 {
-		n = (n&fteEntityRefShortMask)<<8 | uint32(msg.GetByte())
-	}
+	n := msg.GetFTEEntityRef()
 	if msg.error || n >= maxRDEntities {
 		return 0, errors.New("invalid or truncated RD entity reference")
 	}

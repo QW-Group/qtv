@@ -80,6 +80,16 @@ func (msg *netMsgR) GetInt16() int16 {
 	return int16(msg.GetUint16())
 }
 
+// GetFTEEntityRef reads FTE's ordinary 15-bit or extended 23-bit entity reference.
+// Consumers validate retained entity limits separately; transient beam keys use the full range.
+func (msg *netMsgR) GetFTEEntityRef() uint32 {
+	n := uint32(msg.GetUint16())
+	if n&fteEntityRefExtend != 0 {
+		n = (n&fteEntityRefShortMask)<<8 | uint32(msg.GetByte())
+	}
+	return n
+}
+
 // Ordinary FTE entity references reserve one short bit for their extra byte.
 const (
 	fteEntityRefExtend    = 0x8000

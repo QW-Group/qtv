@@ -778,12 +778,19 @@ const (
 	teTeleport       = 11
 	teBlood          = 12
 	teLightningBlood = 13
+	teBullet         = 14 // FTE TE_BULLET.
+	teSuperBullet    = 15 // FTE TEQW_SUPERBULLET.
+	teRailTrail      = 17 // FTE TEQW_RAILTRAIL.
+	teBeam           = 18 // FTE TEQW_BEAM.
+	teExplosion2     = 19 // FTE TEQW_EXPLOSION2: position, palette start and length.
+	teNQExplosion    = 20 // FTE TEQW_NQEXPLOSION.
+	teNQGunShot      = 21 // FTE TEQW_NQGUNSHOT: position without a count byte in QW.
 )
 
 func (qp *qProtocol) readTempEntity() error {
 	i := qp.r.GetByte()
 	switch i {
-	case teSpike:
+	case teSpike, teBullet, teSuperBullet, teNQGunShot:
 		qp.r.GetCoord()
 		qp.r.GetCoord()
 		qp.r.GetCoord()
@@ -796,17 +803,29 @@ func (qp *qProtocol) readTempEntity() error {
 		qp.r.GetCoord()
 		qp.r.GetCoord()
 		qp.r.GetCoord()
-	case teExplosion:
+	case teExplosion, teNQExplosion:
 		qp.r.GetCoord()
 		qp.r.GetCoord()
 		qp.r.GetCoord()
+	case teExplosion2:
+		qp.r.GetCoord()
+		qp.r.GetCoord()
+		qp.r.GetCoord()
+		qp.r.GetByte() // Palette start.
+		qp.r.GetByte() // Palette length, including zero.
 	case teTarExplosion:
 		qp.r.GetCoord()
 		qp.r.GetCoord()
 		qp.r.GetCoord()
-	case teLightning1, teLightning2, teLightning3:
-		// Beam IDs include negative aliases and retain their 16-bit wire format.
-		qp.r.GetUint16()
+	case teLightning1, teLightning2, teLightning3, teBeam:
+		// Lightning and beam IDs use FTE references in RD, without retained-world limits.
+		if qp.usesRD() {
+			qp.r.GetFTEEntityRef()
+		} else {
+			qp.r.GetUint16() // Legacy lightning also permits raw signed aliases.
+		}
+		fallthrough
+	case teRailTrail:
 		qp.r.GetCoord()
 		qp.r.GetCoord()
 		qp.r.GetCoord()
