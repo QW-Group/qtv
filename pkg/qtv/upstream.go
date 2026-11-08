@@ -64,7 +64,7 @@ type uStream struct {
 	parseTime           uint64                    // Time in milliseconds since we started parsing MVD stream, increased each time we successfully parsed MVD message.
 	curTime             uint64                    // Current QTV time in milliseconds.
 	rb                  *byteQueue                // Input buffer from upstream.
-	wb                  *ringbuffer.RingBuffer    // Output buffer to upstream.
+	wb                  *byteQueue                // Output buffer to upstream.
 	hp                  uHeaderParse              // Initial headers handshake.
 	qp                  *qProtocol                // Quake protocol, we stored parsed data from upstream here, also used for generating quake protocol messages.
 	mvdHdr              *netMsgW                  // MVD header we use frequently for writing data to downstream(s).
@@ -96,6 +96,11 @@ func newUStream(qtv *QTV, ussNotifyCh chan<- interface{}, server string, ussName
 		return nil, err
 	}
 
+	wb, err := newByteQueue(qtv.qvs.Get("ustream_write_buf_size").Int, 4*1024)
+	if err != nil {
+		return nil, err
+	}
+
 	ctx, cancel := context.WithCancel(qtv.ctx)
 
 	us = &uStream{
@@ -113,7 +118,7 @@ func newUStream(qtv *QTV, ussNotifyCh chan<- interface{}, server string, ussName
 		linkedDs:        map[dStreamId]*dStream{},
 		reconnectDelay:  initialReconnectDelay,
 		rb:              rb,
-		wb:              ringbuffer.NewExtended(qtv.qvs.Get("ustream_write_buf_size").Int, false, false), // Underlying buffer is two times more.
+		wb:              wb,
 		mvdHdr:          newNetMsgW(make([]byte, 16), false),
 	}
 	us.qp = newQProtocol(us)
@@ -539,7 +544,7 @@ func (us *uStream) sendClcStringCmdf(format string, a ...interface{}) (err error
 		return errors.New("netMsg with error")
 	}
 
-	if us.wb.Length()+msg.WPos() > us.wb.Capacity() {
+	if msg.WPos() > us.wb.Available() {
 		return errors.New("command skipped since it could overflow upstream buffer")
 	}
 
