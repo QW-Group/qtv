@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -256,6 +257,63 @@ func TestByteQueueBorrowedHeadAndSnapshot(t *testing.T) {
 	q.Reset()
 }
 
+func TestByteQueueOutputBatchCrossesBlocks(t *testing.T) {
+	q := mustByteQueue(65536, 1024)
+	data := bytes.Repeat([]byte("abcd"), 8192)
+	q.WriteFull(data)
+	a, b := net.Pipe()
+	defer b.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	permit := make(chan struct{}, 1)
+	done := make(chan error, 1)
+	go func() { _, e := q.writeToWithContext(ctx, a, permit); done <- e }()
+	b.SetReadDeadline(time.Now().Add(time.Second))
+	got := make([]byte, len(data))
+	if _, e := io.ReadFull(b, got); e != nil {
+		t.Fatal("batch paced at a block boundary", e)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatal("batch changed data")
+	}
+	q.WriteFull([]byte("next"))
+	b.SetReadDeadline(time.Now().Add(30 * time.Millisecond))
+	one := make([]byte, 4)
+	if n, e := b.Read(one); n != 0 || e == nil {
+		t.Fatal("next batch bypassed permit", n, e)
+	}
+	b.SetReadDeadline(time.Now().Add(time.Second))
+	permit <- struct{}{}
+	if _, e := io.ReadFull(b, one); e != nil || string(one) != "next" {
+		t.Fatal("next batch", string(one), e)
+	}
+	cancel()
+	a.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("batch permit ignored cancellation")
+	}
+}
+
+type cancelQueueWriter struct {
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (w *cancelQueueWriter) Write(p []byte) (int, error) { w.calls++; w.cancel(); return len(p), nil }
+func TestByteQueueCancelBetweenBlocks(t *testing.T) {
+	q := mustByteQueue(65536, 1024)
+	q.WriteFull(make([]byte, 65536))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := &cancelQueueWriter{cancel: cancel}
+	n, e := q.WriteToWithContext(ctx, w)
+	if e != context.Canceled || n != 1024 || w.calls != 1 || q.Length() != 65536-1024 {
+		t.Fatal(n, e, w.calls, q.Length())
+	}
+}
+
 // Two-block bursts should reuse bounded storage instead of allocating each tick.
 func TestByteQueueReusesTwoBlockBursts(t *testing.T) {
 	q := mustByteQueue(64, 16)
@@ -269,5 +327,43 @@ func TestByteQueueReusesTwoBlockBursts(t *testing.T) {
 	q.Discard(64)
 	if len(q.spares) != 2 {
 		t.Fatal("spare storage exceeds bounded reserve", len(q.spares))
+	}
+}
+
+func TestByteQueueStringFlushPartial(t *testing.T) {
+	q := mustByteQueue(19, 4)
+	q.WriteFull([]byte("prefix!"))
+	reader := strings.NewReader("abcdefghijklmno")
+	if n, err := reader.WriteTo(q); n != 12 || !errors.Is(err, errByteQueueFull) || reader.Len() != 3 || string(queueBytes(q)) != "prefix!abcdefghijkl" {
+		t.Fatal("partial string reply did not retain its exact remainder", n, err, reader.Len(), string(queueBytes(q)))
+	}
+	q.Discard(8)
+	if n, err := reader.WriteTo(q); n != 3 || err != nil || reader.Len() != 0 || string(queueBytes(q)) != "bcdefghijklmno" {
+		t.Fatal("continued string reply changed bytes", n, err, reader.Len(), string(queueBytes(q)))
+	}
+	if n, err := io.WriteString(q, ""); n != 0 || err != nil {
+		t.Fatal("empty string write", n, err)
+	}
+	q.reading = true
+	if n, err := io.WriteString(q, "x"); n != 0 || !errors.Is(err, errByteQueueBusy) {
+		t.Fatal("string write bypassed exclusive IO producer", n, err)
+	}
+	q.reading = false
+}
+
+// A full queue must reject a large pending string without allocating a copy of
+// its unsent suffix; strings.Reader.WriteTo is the actual reply-flush caller.
+func TestByteQueueFullStringRejectAllocations(t *testing.T) {
+	q := mustByteQueue(64, 16)
+	q.WriteFull(make([]byte, 64))
+	pending := strings.Repeat("reply", 1<<18)
+	allocs := testing.AllocsPerRun(5, func() {
+		reader := strings.NewReader(pending)
+		if n, err := reader.WriteTo(q); n != 0 || !errors.Is(err, errByteQueueFull) || reader.Len() != len(pending) {
+			t.Fatal("full string rejection changed progress", n, err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("full queue allocated for pending reply: %g allocations", allocs)
 	}
 }

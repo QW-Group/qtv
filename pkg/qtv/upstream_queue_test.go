@@ -224,7 +224,7 @@ func TestUpstreamQueueMVDSpansAndBudget(t *testing.T) {
 		if e := us.parseMVD(); e != nil {
 			t.Fatal(block, e)
 		}
-		if !bytes.Equal(viewer.wb.BytesOneReader(), data) || us.rb.Length() != 0 {
+		if !bytes.Equal(queueBytes(viewer.wb), data) || us.rb.Length() != 0 {
 			t.Fatal("span changed records")
 		}
 	}

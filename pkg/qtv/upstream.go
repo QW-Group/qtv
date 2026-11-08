@@ -11,11 +11,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/markphelps/optional"
-	"github.com/qqshka/ringbuffer"
 	"github.com/qw-group/qtv/pkg/info"
 	"github.com/qw-group/qtv/pkg/qfs"
 	"github.com/rs/zerolog/log"
@@ -41,7 +41,7 @@ type uStream struct {
 	// Particularly when dStream trying to "link" (inserted inside linkedDs map) with uStream it
 	// should be done only when uStream state is higher than closing_uStreamState, so state change require locking as well.
 	// When we accessing linkedDs we also should lock mutex since both dStream and uStream sharing it.
-	mu       ringbuffer.Mutex
+	mu       sync.Mutex
 	state    uStreamState           // Stream state.
 	linkedDs map[dStreamId]*dStream // Linked dStreams we know about.
 	// }

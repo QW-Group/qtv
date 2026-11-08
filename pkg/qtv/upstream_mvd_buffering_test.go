@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"github.com/qqshka/ringbuffer"
 	"testing"
 )
 
@@ -22,7 +21,7 @@ func bufferingTestStream(t *testing.T, delay int, rd bool) (*uStream, *dStream) 
 		us.qp.extFlagsFTE2 = ftePext2ReplacementDeltas
 	}
 	us.qp.extFlagsMVD1 = mvdPext1HiddenMessages
-	viewer := &dStream{id: 1, state: dsActive, wb: ringbuffer.New(4096)}
+	viewer := &dStream{id: 1, state: dsActive, wb: mustByteQueue(4096, 16*1024)}
 	us.linkedDs = map[dStreamId]*dStream{1: viewer}
 	return us, viewer
 }
@@ -61,8 +60,8 @@ func TestMVDProgressPreservesPlaybackClock(t *testing.T) {
 						if err := us.parseMVD(); err != nil {
 							t.Fatal(err)
 						}
-						if us.parseTime != 1000 || us.qp.cdTrack != 7 || !bytes.Equal(queueBytes(us.rb), record[:cut]) || !bytes.Equal(viewer.wb.BytesOneReader(), good) {
-							t.Fatalf("progress changed clock or consumed partial record: clock=%d pending=%x forwarded=%x", us.parseTime, queueBytes(us.rb), viewer.wb.BytesOneReader())
+						if us.parseTime != 1000 || us.qp.cdTrack != 7 || !bytes.Equal(queueBytes(us.rb), record[:cut]) || !bytes.Equal(queueBytes(viewer.wb), good) {
+							t.Fatalf("progress changed clock or consumed partial record: clock=%d pending=%x forwarded=%x", us.parseTime, queueBytes(us.rb), queueBytes(viewer.wb))
 						}
 						if _, err := us.rb.WriteFull(record[cut:]); err != nil {
 							t.Fatal(err)
@@ -72,7 +71,7 @@ func TestMVDProgressPreservesPlaybackClock(t *testing.T) {
 							t.Fatal(err)
 						}
 						want := append(append([]byte{}, good...), record...)
-						if us.rb.Length() != 0 || !bytes.Equal(viewer.wb.BytesOneReader(), want) || us.parseTime != 1000 {
+						if us.rb.Length() != 0 || !bytes.Equal(queueBytes(viewer.wb), want) || us.parseTime != 1000 {
 							t.Fatal("completed record did not pass on the next tick")
 						}
 					})
@@ -113,7 +112,7 @@ func TestMVDProgressHonorsFutureDeadline(t *testing.T) {
 		if err := us.parseMVD(); err != nil {
 			t.Fatal(err)
 		}
-		if us.qp.cdTrack != 7 || !bytes.Equal(viewer.wb.BytesOneReader(), good) {
+		if us.qp.cdTrack != 7 || !bytes.Equal(queueBytes(viewer.wb), good) {
 			t.Fatal("due record was not forwarded")
 		}
 	}
@@ -137,7 +136,7 @@ func TestMVDNoProgressRecoveryWaitsForDeadline(t *testing.T) {
 	if err := us.parseMVD(); err != nil {
 		t.Fatal(err)
 	}
-	if us.rb.Length() != 0 || !bytes.Equal(viewer.wb.BytesOneReader(), good) || us.parseTime != 3000 {
+	if us.rb.Length() != 0 || !bytes.Equal(queueBytes(viewer.wb), good) || us.parseTime != 3000 {
 		t.Fatal("recovery failed or added another pause after progress")
 	}
 }
@@ -166,7 +165,7 @@ func TestMVDProgressAdvancesRecordTime(t *testing.T) {
 	}
 	want := append(append([]byte{}, first...), second...)
 	want[0] = 200 // Forwarded timestamps retain the existing speed normalization.
-	if !bytes.Equal(viewer.wb.BytesOneReader(), want) {
+	if !bytes.Equal(queueBytes(viewer.wb), want) {
 		t.Fatal("forwarded packet timing or order changed")
 	}
 }
@@ -182,7 +181,7 @@ func TestMVDFileDoesNotRebuffer(t *testing.T) {
 	if err := us.parseMVD(); err != nil || us.parseTime != 1000 {
 		t.Fatal("file progress changed the playback clock", err)
 	}
-	if !bytes.Equal(queueBytes(us.rb), []byte{0}) || !bytes.Equal(viewer.wb.BytesOneReader(), good) {
+	if !bytes.Equal(queueBytes(us.rb), []byte{0}) || !bytes.Equal(queueBytes(viewer.wb), good) {
 		t.Fatal("file partial tail or completed record changed")
 	}
 }
@@ -195,7 +194,7 @@ func TestMVDEOFDrainsProgressBeforeError(t *testing.T) {
 	if err := us.parseMVD(); err != nil {
 		t.Fatal("EOF prevented forwarding complete records", err)
 	}
-	if !bytes.Equal(viewer.wb.BytesOneReader(), good) || us.rb.Length() != 1 {
+	if !bytes.Equal(queueBytes(viewer.wb), good) || us.rb.Length() != 1 {
 		t.Fatal("EOF lost completed records or the partial tail")
 	}
 	us.curTime = 1100

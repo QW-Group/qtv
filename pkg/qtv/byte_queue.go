@@ -76,24 +76,30 @@ func (q *byteQueue) Available() int {
 // IsEmpty reports whether all committed bytes have been consumed.
 func (q *byteQueue) IsEmpty() bool { return q.Length() == 0 }
 
+// tailLocked returns writable space, reusing drained storage before allocating.
+// The caller holds mu and commits only bytes past the existing tail prefix.
+func (q *byteQueue) tailLocked() *queueBlock {
+	if len(q.blocks) == 0 || q.blocks[len(q.blocks)-1].used == q.blockSize {
+		var b []byte
+		if len(q.spares) > 0 {
+			last := len(q.spares) - 1
+			b = q.spares[last]
+			q.spares[last] = nil
+			q.spares = q.spares[:last]
+		}
+		if b == nil {
+			b = make([]byte, q.blockSize)
+		}
+		q.blocks = append(q.blocks, queueBlock{data: b})
+	}
+	return &q.blocks[len(q.blocks)-1]
+}
+
 // appendLocked copies bytes already checked against the budget.
 func (q *byteQueue) appendLocked(p []byte) {
 	q.length += len(p)
 	for len(p) > 0 {
-		if len(q.blocks) == 0 || q.blocks[len(q.blocks)-1].used == q.blockSize {
-			var b []byte
-			if len(q.spares) > 0 {
-				last := len(q.spares) - 1
-				b = q.spares[last]
-				q.spares[last] = nil
-				q.spares = q.spares[:last]
-			}
-			if b == nil {
-				b = make([]byte, q.blockSize)
-			}
-			q.blocks = append(q.blocks, queueBlock{data: b})
-		}
-		tail := &q.blocks[len(q.blocks)-1]
+		tail := q.tailLocked()
 		n := copy(tail.data[tail.used:], p)
 		tail.used += n
 		p = p[n:]
@@ -125,6 +131,30 @@ func (q *byteQueue) Write(p []byte) (int, error) {
 	n := min(len(p), q.limit-q.length)
 	q.appendLocked(p[:n])
 	if n != len(p) {
+		return n, errByteQueueFull
+	}
+	return n, nil
+}
+
+// WriteString copies only accepted bytes directly into owned blocks, so a
+// partially flushed reply never converts its whole pending suffix to []byte.
+func (q *byteQueue) WriteString(s string) (int, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.reading {
+		return 0, errByteQueueBusy
+	}
+	n := min(len(s), q.limit-q.length)
+	pending := s[:n]
+	q.length += n
+	for len(pending) > 0 {
+		tail := q.tailLocked()
+		copied := copy(tail.data[tail.used:], pending)
+		tail.used += copied
+		pending = pending[copied:]
+	}
+	notifyQueue(q.dataReady)
+	if n != len(s) {
 		return n, errByteQueueFull
 	}
 	return n, nil
@@ -249,7 +279,14 @@ func (q *byteQueue) ReadFromWithContext(ctx context.Context, r io.Reader) (total
 
 // WriteToWithContext keeps the borrowed head queued until Write returns.
 // The owner must close the writer to interrupt a blocked Write on cancellation.
-func (q *byteQueue) WriteToWithContext(ctx context.Context, w io.Writer) (total int64, err error) {
+func (q *byteQueue) WriteToWithContext(ctx context.Context, w io.Writer) (int64, error) {
+	return q.writeToWithContext(ctx, w, nil)
+}
+
+// writeToWithContext optionally waits for a consumer tick between entire queued
+// prefixes. A batch spans any number of blocks; positive writes still report
+// progress immediately, independently of the next-batch permit.
+func (q *byteQueue) writeToWithContext(ctx context.Context, w io.Writer, batchPermit <-chan struct{}) (total int64, err error) {
 	q.mu.Lock()
 	if q.writing {
 		q.mu.Unlock()
@@ -272,22 +309,38 @@ func (q *byteQueue) WriteToWithContext(ctx context.Context, w io.Writer) (total 
 			}
 			continue
 		}
-		b := q.blocks[0]
-		p := b.data[q.head:b.used]
+		remaining := q.length
 		q.mu.Unlock()
-		n, err := w.Write(p)
-		if n > 0 {
+		for remaining > 0 {
+			if err := ctx.Err(); err != nil {
+				return total, err
+			}
 			q.mu.Lock()
-			q.discardLocked(n)
+			b := q.blocks[0]
+			p := b.data[q.head : q.head+min(b.used-q.head, remaining)]
 			q.mu.Unlock()
-			total += int64(n)
-			notifyQueue(q.writeProgress)
+			n, err := w.Write(p)
+			if n > 0 {
+				q.mu.Lock()
+				q.discardLocked(n)
+				q.mu.Unlock()
+				total += int64(n)
+				remaining -= n
+				notifyQueue(q.writeProgress)
+			}
+			if err != nil {
+				return total, err
+			}
+			if n == 0 {
+				return total, io.ErrNoProgress
+			}
 		}
-		if err != nil {
-			return total, err
-		}
-		if n == 0 {
-			return total, io.ErrNoProgress
+		if batchPermit != nil {
+			select {
+			case <-ctx.Done():
+				return total, ctx.Err()
+			case <-batchPermit:
+			}
 		}
 	}
 }

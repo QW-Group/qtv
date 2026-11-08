@@ -209,8 +209,8 @@ func (dss *dStreamStorage) regVars(qtv *QTV) {
 	qtv.qvs.Reg("fp_messages", "4")
 	qtv.qvs.Reg("fp_persecond", "2")
 	qtv.qvs.Reg("fp_secondsdead", "2")
-	qtv.qvs.Regf("dstream_read_buf_size", "%v", 1024*32)
-	qtv.qvs.Regf("dstream_write_buf_size", "%v", 1024*192)
+	qtv.qvs.RegEx("dstream_read_buf_size", 1024*32, 0, onChangeQueueSize)
+	qtv.qvs.RegEx("dstream_write_buf_size", 1024*192, 0, onChangeQueueSize)
 	qtv.qvs.Reg("dstream_timeout", "30")
 }
 
