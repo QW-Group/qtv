@@ -281,6 +281,10 @@ func (us *uStream) parseMVD() (err error) {
 			if us.ioError && totalDiscard == 0 {
 				return errors.New("IO error detected and input buffer is empty")
 			}
+			// Only rebuffer when this pass consumed no complete records.
+			if totalDiscard == 0 {
+				us.tryBuffering()
+			}
 			break
 		}
 		// We're about to destroy this data, so it had better be forwarded by now!
@@ -309,7 +313,6 @@ func (us *uStream) parseMVDMessage(b []byte, demoSpeed float64, isLowLatency boo
 	defer func() { err = multierror.Prefix(err, "uStream.parseMVDMessage:") }()
 
 	if len(b) < 2 {
-		us.tryBuffering()
 		return true, 0, 0, nil
 	}
 
@@ -323,7 +326,6 @@ func (us *uStream) parseMVDMessage(b []byte, demoSpeed float64, isLowLatency boo
 	hiddenMessage := false
 	if messageType == mvdMsgMulti && (us.qp.extFlagsMVD1&mvdPext1HiddenMessages) != 0 {
 		if len(b) < 6 {
-			us.tryBuffering()
 			return true, 0, 0, nil
 		}
 		hiddenMessage = (binary.LittleEndian.Uint32(b[2:6]) == 0)
@@ -332,7 +334,6 @@ func (us *uStream) parseMVDMessage(b []byte, demoSpeed float64, isLowLatency boo
 	// If streaming from server, use the elapsed time when paused rather than gametime.
 	if hiddenMessage && us.isTCP() {
 		if len(b) < 13 {
-			us.tryBuffering()
 			return true, 0, 0, nil
 		}
 
@@ -356,7 +357,6 @@ func (us *uStream) parseMVDMessage(b []byte, demoSpeed float64, isLowLatency boo
 		length = 10
 
 		if len(b) < length {
-			us.tryBuffering()
 			return true, 0, 0, nil
 		}
 
@@ -373,7 +373,6 @@ func (us *uStream) parseMVDMessage(b []byte, demoSpeed float64, isLowLatency boo
 
 	// The size parameter doesn't fit.
 	if len(b) < lengthOfs+4 {
-		us.tryBuffering()
 		return true, 0, 0, nil
 	}
 
@@ -384,7 +383,6 @@ func (us *uStream) parseMVDMessage(b []byte, demoSpeed float64, isLowLatency boo
 	}
 
 	if len(b) < length+lengthOfs+4 {
-		us.tryBuffering()
 		return true, 0, 0, nil
 	}
 
@@ -458,7 +456,8 @@ func (us *uStream) sendMVDDataDown(b []byte) (err error) {
 func (us *uStream) sendInitialMVDData(ds *dStream) (err error) {
 	defer func() { err = multierror.Prefix(err, "uStream.sendInitialMVDData:") }()
 
-	if us.getState() != usActive || ds.download.IsActive() {
+	if us.getState() != usActive || ds.download.IsActive() ||
+		(us.qp.usesRD() && (us.qp.rd == nil || !us.qp.rd.ready)) {
 		return nil // Upstream not ready, do it later.
 	}
 

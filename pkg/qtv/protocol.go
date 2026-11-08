@@ -48,6 +48,7 @@ func (qp *qProtocol) reset() {
 
 // Quake protocol reader storage.
 type protocolReaderData struct {
+	rd               *rdWorld // Optional full-width retained state, owned by this source/map.
 	incomingSequence uint
 	isPaused         bool
 	extFlagsFTE1     uint32
@@ -75,6 +76,7 @@ type protocolReaderData struct {
 	// qqshka: above comment valid only if upstream connected to server before match start.
 	matchStartTime      uint64
 	matchStartLocalTime uint64
+	rdUpdates           []rdUpdate // Source-owned decode scratch, released on map reset; unused by legacy streams.
 }
 
 func (pd *protocolReaderData) reset() {
@@ -207,6 +209,7 @@ const (
 	ftePextFloatCoords  uint32 = 0x00008000
 	ftePextColourmod    uint32 = 0x00080000 // Extra 24 bit color in delta if changed
 	ftePextSpawnStatic2 uint32 = 0x00400000 // Sends an entity delta instead of a baseline (or spawnstatic). Obsoleted by PEXT2_REPLACEMENTDELTAS.
+	ftePextCSQC         uint32 = 0x40000000 // Client-side QC entities and events.
 )
 
 const (
@@ -217,6 +220,14 @@ const (
 	qtvEzQuakeExtQtvUserList = (1 << 2) // QTV support qtvuserlist command.
 
 	qtvEzQuakeExtMask = (qtvEzQuakeExtDownload | qtvEzQuakeExtSetInfo | qtvEzQuakeExtQtvUserList)
+)
+
+// RD is selected by MVD serverdata, independently of the QTV handshake.
+const (
+	ftePext2ReplacementDeltas uint32      = 0x00000008
+	ftePext2VoiceChat         uint32      = 0x00000002
+	mvdPext1FloatCoords       uint32      = 0x00000001 // Widens entity coordinates only.
+	svc_fte_updateentities    protocolSvc = 86
 )
 
 // Flags on entities.

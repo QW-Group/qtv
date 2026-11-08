@@ -281,6 +281,9 @@ func (qp *qProtocol) putPreSpawn(msg *netMsgW, curmsgsize int, bufnum int) int {
 }
 
 func (qp *qProtocol) sendPreSpawn(ds *dStream) error {
+	if qp.usesRD() {
+		return qp.sendRDPreSpawn(ds)
+	}
 	for prespawn := 0; prespawn >= 0; {
 		msg := qp.w.Clear()
 		prespawn = qp.putPreSpawn(msg, 0, prespawn)
@@ -437,6 +440,9 @@ func (qp *qProtocol) putDelta(msg *netMsgW, entnum int, from *entityState, to *e
 }
 
 func (qp *qProtocol) sendEnts(ds *dStream) error {
+	if qp.usesRD() {
+		return qp.sendRDEnts(ds)
+	}
 	msg := qp.w.Clear()
 
 	msg.PutSVC(svc_packetentities)
@@ -541,6 +547,9 @@ func (qp *qProtocol) putMatchTimes(msg *netMsgW) {
 }
 
 func (qp *qProtocol) sendPlayers(ds *dStream) error {
+	if qp.usesRD() {
+		return nil
+	} // Player movement belongs to the RD entity snapshot.
 	msg := qp.w.Clear()
 
 	for i := 0; i < maxClients; i++ {
