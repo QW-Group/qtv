@@ -60,6 +60,7 @@ type uStream struct {
 	ioECh               chan error                // This channel used for receiving IO errors from ioReader/ioWriter goroutines.
 	ussNotifyCh         chan<- interface{}        // Send id there when we about to quit so uStreamStorage will do clean up.
 	reconnectDelay      time.Duration             // Delay between connections.
+	mvdTime             mvdTimeCache              // Original queued MVD time, owned by this source consumer.
 	parseTime           uint64                    // Time in milliseconds since we started parsing MVD stream, increased each time we successfully parsed MVD message.
 	curTime             uint64                    // Current QTV time in milliseconds.
 	rb                  *ringbuffer.RingBuffer    // Input buffer from upstream.
@@ -240,6 +241,7 @@ func (us *uStream) setState(state uStreamState) (err error) {
 		us.unlinkAllDownstreams()
 		us.mu.Lock()
 	case usInitial:
+		us.mvdTime.reset()
 		us.parseTime = 0
 
 		us.hp.setState(invalid_uHeaderParseState)
@@ -256,6 +258,7 @@ func (us *uStream) setState(state uStreamState) (err error) {
 	case usParsingHeader:
 		us.hp.setState(version_uHeaderParseState)
 	case usParsingConnection:
+		us.mvdTime.reset()
 		us.parseTime = us.curTime + (uint64)(us.expectedIngameDelay()*1000)
 		// Reset reader storage. Should be done on each map load.
 		us.qp.protocolReaderData.reset()

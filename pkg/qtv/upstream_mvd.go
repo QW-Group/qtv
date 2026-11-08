@@ -112,93 +112,82 @@ func isPausedTimeMessage(b []byte) (isPausedTime bool, elapsedTime byte) {
 	return false, 0
 }
 
-// Return non zero if we have at least one message, milliseconds contains how long our buffer in milliseconds.
-func consistantMVD(b []byte, isElapsedTime bool) (available int, milliseconds int) {
-	for {
-		done, discard, packetTime := consistantMVDMessage(b, isElapsedTime)
-		if done {
-			return available, milliseconds
-		}
-		available += discard
-		milliseconds += int(packetTime)
-		b = b[discard:]
+// mvdRecordStatus distinguishes a partial tail from invalid container framing.
+type mvdRecordStatus byte
+
+const (
+	mvdRecordIncomplete mvdRecordStatus = iota
+	mvdRecordComplete
+	mvdRecordInvalid
+)
+
+// inspectMVDRecord validates framing without advancing or normalizing time.
+func inspectMVDRecord(c *byteCursor, elapsed bool) (int, byte, mvdRecordStatus) {
+	var scratch [13]byte
+	if c.left < 2 {
+		return 0, 0, mvdRecordIncomplete
 	}
+	b := c.peek(2, scratch[:])
+	stamp := b[0]
+	kind := mvdMsgType(b[1]) & mvdMsgMask
+	if !isKnownMvdMsg(kind) {
+		return 0, 0, mvdRecordInvalid
+	}
+	if kind == mvdMsgSet {
+		if c.left < 10 {
+			return 0, 0, mvdRecordIncomplete
+		}
+		return 10, stamp, mvdRecordComplete
+	}
+	offset := 2
+	if kind == mvdMsgMulti {
+		offset = 6
+		if c.left < 6 {
+			return 0, 0, mvdRecordIncomplete
+		}
+		if elapsed && binary.LittleEndian.Uint32(c.peek(6, scratch[:])[2:]) == 0 {
+			if c.left < 13 {
+				return 0, 0, mvdRecordIncomplete
+			}
+			if paused, t := isPausedTimeMessage(c.peek(13, scratch[:])[6:13]); paused {
+				stamp = t
+			}
+		}
+	}
+	if c.left < offset+4 {
+		return 0, 0, mvdRecordIncomplete
+	}
+	size := binary.LittleEndian.Uint32(c.peek(offset+4, scratch[:])[offset:])
+	if size > maxMvdSize {
+		return 0, 0, mvdRecordInvalid
+	}
+	n := int(size) + offset + 4
+	if c.left < n {
+		return 0, 0, mvdRecordIncomplete
+	}
+	return n, stamp, mvdRecordComplete
 }
 
-func consistantMVDMessage(b []byte, isElapsedTime bool) (done bool, discard int, packetTime byte) {
-	if len(b) < 2 {
-		return true, 0, 0
-	}
-
-	packetTime = b[0]
-	messageType := mvdMsgType(b[1]) & mvdMsgMask
-
-	if !isKnownMvdMsg(messageType) {
-		return true, 0, 0 // Corrupted MVD stream.
-	}
-
-	hiddenMessage := false
-	if messageType == mvdMsgMulti && isElapsedTime {
-		if len(b) < 6 {
-			return true, 0, 0
+// consistantMVD reports the complete prefix and its original container time.
+func consistantMVD(b []byte, elapsed bool) (available int, milliseconds int64) {
+	cur := byteViewOf(b).cursor(0)
+	for cur.left > 0 {
+		n, ms, state := inspectMVDRecord(&cur, elapsed)
+		if state != mvdRecordComplete {
+			break
 		}
-		hiddenMessage = (binary.LittleEndian.Uint32(b[2:6]) == 0)
+		available += n
+		milliseconds += int64(ms)
+		cur.skip(n)
 	}
+	return
+}
 
-	// If streaming from server, use the elapsed time when paused rather than gametime.
-	if hiddenMessage {
-		if len(b) < 13 {
-			return true, 0, 0
-		}
-
-		if isPausedTime, elapsedTime := isPausedTimeMessage(b[6 : 6+7]); isPausedTime {
-			// We're streaming, use elapsed time when paused
-			packetTime = elapsedTime
-		}
-	}
-
-	var (
-		length    int
-		lengthOfs int
-	)
-
-	switch messageType {
-	case mvdMsgSet: // dem_set is something really dated, it used in old MVD demos, should not be in TCP stream nowdays (unless streaming old file).
-		length = 10
-
-		if len(b) < length {
-			return true, 0, 0
-		}
-
-		// Not done yet, skip 'length' bytes at the caller.
-		return false, length, packetTime
-
-	case mvdMsgMulti:
-		lengthOfs = 6
-	default:
-		lengthOfs = 2
-	}
-
-	if len(b) < lengthOfs+4 {
-		// The size parameter doesn't fit.
-		return true, 0, 0
-	}
-
-	length = int(binary.LittleEndian.Uint32(b[lengthOfs : lengthOfs+4]))
-
-	if length > maxMvdSize {
-		return true, 0, 0 // Corrupted MVD stream.
-	}
-
-	if len(b) < length+lengthOfs+4 {
-		return true, 0, 0
-	}
-
-	// Make length to be the length of the entire packet.
-	length = length + lengthOfs + 4
-
-	// Not done yet, skip 'length' bytes at the caller.
-	return false, length, packetTime
+// consistantMVDMessage retains the legacy complete-prefix inspection contract.
+func consistantMVDMessage(b []byte, elapsed bool) (bool, int, byte) {
+	cur := byteViewOf(b).cursor(0)
+	n, ms, state := inspectMVDRecord(&cur, elapsed)
+	return state != mvdRecordComplete, n, ms
 }
 
 func (us *uStream) gameInProgress() bool {
@@ -219,17 +208,12 @@ func (us *uStream) expectedIngameDelay() float64 {
 	return bound(0, expectedDelay, 15)
 }
 
-func (us *uStream) guessPlaybackSpeed(b []byte) (demoSpeed float64, isLowLatency bool) {
+func (us *uStream) guessPlaybackSpeed(view byteView) (demoSpeed float64, isLowLatency bool) {
 	// Use 100% demo speed, because buffer adjustment works badly in demo case.
 	// Auto adjustment works badly because we always have too much or too less data in buffer in demo(mvd file) case.
 	if us.isDemo() {
 		return 1, false
 	}
-
-	// {
-	// 	_, ms := consistantMVD(b, false)
-	// 	log.Trace().Str("ctx", "uStream").Uint32("id", us.id).Msgf("sec: %.3f", float64(ms)/1000)
-	// }
 
 	expectedDelay := us.expectedIngameDelay()
 	if expectedDelay == 0 {
@@ -241,7 +225,7 @@ func (us *uStream) guessPlaybackSpeed(b []byte) (demoSpeed float64, isLowLatency
 	}
 
 	isElapsedTime := (us.qp.extFlagsMVD1 & mvdPext1HiddenMessages) != 0
-	_, ms := consistantMVD(b, isElapsedTime)
+	ms := us.mvdTime.pending(view, isElapsedTime)
 
 	if !us.gameInProgress() {
 		expectedDelay = 0.5 // In prewar use short delay.
@@ -262,14 +246,23 @@ func (us *uStream) guessPlaybackSpeed(b []byte) (demoSpeed float64, isLowLatency
 }
 
 func (us *uStream) parseMVD() (err error) {
-	defer func() { err = multierror.Prefix(err, "uStream.parseMVD:") }()
+	defer func() {
+		if err != nil {
+			us.mvdTime.reset()
+		}
+		err = multierror.Prefix(err, "uStream.parseMVD:")
+	}()
 
 	b := us.rb.BytesOneReader()
 	totalDiscard := 0
-
-	demoSpeed, isLowLatency := us.guessPlaybackSpeed(b)
+	var totalMS int64
+	view := byteViewOf(b)
+	defer view.release()
+	demoSpeed, isLowLatency := us.guessPlaybackSpeed(view)
 
 	for isLowLatency || us.curTime >= us.parseTime {
+		cur := byteViewOf(b).cursor(0)
+		_, rawMS, _ := inspectMVDRecord(&cur, us.isTCP() && us.qp.extFlagsMVD1&mvdPext1HiddenMessages != 0)
 		done, discard, packetTime, err := us.parseMVDMessage(b, demoSpeed, isLowLatency)
 		if err != nil {
 			return err
@@ -287,6 +280,7 @@ func (us *uStream) parseMVD() (err error) {
 			}
 			break
 		}
+		totalMS += int64(rawMS)
 		// We're about to destroy this data, so it had better be forwarded by now!
 		b[0] = packetTime // Adjust packet time according to our demospeed.
 		if err := us.sendMVDDataDown(b[:discard]); err != nil {
@@ -295,7 +289,11 @@ func (us *uStream) parseMVD() (err error) {
 		b = b[discard:]
 	}
 
-	return us.rb.Discard(totalDiscard)
+	if err = us.rb.Discard(totalDiscard); err != nil {
+		return err
+	}
+	us.mvdTime.consume(totalDiscard, totalMS, us.qp.extFlagsMVD1&mvdPext1HiddenMessages != 0)
+	return nil
 }
 
 // If upstream does not have enough data for streaming then
@@ -312,79 +310,26 @@ func (us *uStream) tryBuffering() {
 func (us *uStream) parseMVDMessage(b []byte, demoSpeed float64, isLowLatency bool) (done bool, discard int, packetTime byte, err error) {
 	defer func() { err = multierror.Prefix(err, "uStream.parseMVDMessage:") }()
 
-	if len(b) < 2 {
-		return true, 0, 0, nil
-	}
-
-	packetTime = b[0]
-	messageType := mvdMsgType(b[1]) & mvdMsgMask
-
-	if !isKnownMvdMsg(messageType) {
+	cur := byteViewOf(b).cursor(0)
+	size, rawMS, state := inspectMVDRecord(&cur, us.isTCP() && us.qp.extFlagsMVD1&mvdPext1HiddenMessages != 0)
+	if state == mvdRecordInvalid {
 		return true, 0, 0, errors.New("corrupted MVD stream")
 	}
-
-	hiddenMessage := false
-	if messageType == mvdMsgMulti && (us.qp.extFlagsMVD1&mvdPext1HiddenMessages) != 0 {
-		if len(b) < 6 {
-			return true, 0, 0, nil
-		}
-		hiddenMessage = (binary.LittleEndian.Uint32(b[2:6]) == 0)
+	if state == mvdRecordIncomplete {
+		return true, 0, 0, nil
 	}
-
-	// If streaming from server, use the elapsed time when paused rather than gametime.
-	if hiddenMessage && us.isTCP() {
-		if len(b) < 13 {
-			return true, 0, 0, nil
-		}
-
-		if isPausedTime, elapsedTime := isPausedTimeMessage(b[6 : 6+7]); isPausedTime {
-			// We're streaming, use elapsed time when paused
-			packetTime = elapsedTime
-		}
-	}
-
-	packetTime = byte(float64(packetTime) / demoSpeed)
-	// We will set parseTime to nextPacketTime after fully packet parse. Do NOT set it right now!!!
+	packetTime = byte(float64(rawMS) / demoSpeed)
 	nextPacketTime := us.parseTime + uint64(packetTime)
-
-	var (
-		length    int
-		lengthOfs int
-	)
-
-	switch messageType {
-	case mvdMsgSet: // mvdMsgSet is something really dated, it used in old MVD demos, should not be in TCP stream nowdays (unless streaming old file).
-		length = 10
-
-		if len(b) < length {
-			return true, 0, 0, nil
-		}
-
-		// We parsed packet successfully, advance parseTime.
+	messageType := mvdMsgType(b[1]) & mvdMsgMask
+	if messageType == mvdMsgSet {
 		us.parseTime = nextPacketTime
-		// Not done yet, discard 'length' bytes at the caller.
-		return false, length, packetTime, nil
-
-	case mvdMsgMulti:
+		return false, size, packetTime, nil
+	}
+	lengthOfs := 2
+	if messageType == mvdMsgMulti {
 		lengthOfs = 6
-	default:
-		lengthOfs = 2
 	}
-
-	// The size parameter doesn't fit.
-	if len(b) < lengthOfs+4 {
-		return true, 0, 0, nil
-	}
-
-	length = int(binary.LittleEndian.Uint32(b[lengthOfs : lengthOfs+4]))
-
-	if length > maxMvdSize {
-		return true, 0, 0, errors.New("corrupted MVD stream")
-	}
-
-	if len(b) < length+lengthOfs+4 {
-		return true, 0, 0, nil
-	}
+	length := size - lengthOfs - 4
 
 	// Read actual message.
 	mb := b[lengthOfs+4:]
