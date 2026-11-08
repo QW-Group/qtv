@@ -16,7 +16,7 @@ func bufferingTestStream(t *testing.T, delay int, rd bool) (*uStream, *dStream) 
 	q.qvs = newQVarStorage(q)
 	q.qvs.Reg("parse_delay", fmt.Sprint(delay))
 	q.qvs.Reg("hostname", "buffering test")
-	us := &uStream{qtv: q, io: &uStreamTCP{}, state: usActive, curTime: 1000, parseTime: 1000, rb: ringbuffer.New(4096)}
+	us := &uStream{qtv: q, io: &uStreamTCP{}, state: usActive, curTime: 1000, parseTime: 1000, rb: mustByteQueue(4096, 64*1024)}
 	us.qp = newQProtocol(us)
 	if rd {
 		us.qp.extFlagsFTE2 = ftePext2ReplacementDeltas
@@ -61,8 +61,8 @@ func TestMVDProgressPreservesPlaybackClock(t *testing.T) {
 						if err := us.parseMVD(); err != nil {
 							t.Fatal(err)
 						}
-						if us.parseTime != 1000 || us.qp.cdTrack != 7 || !bytes.Equal(us.rb.BytesOneReader(), record[:cut]) || !bytes.Equal(viewer.wb.BytesOneReader(), good) {
-							t.Fatalf("progress changed clock or consumed partial record: clock=%d pending=%x forwarded=%x", us.parseTime, us.rb.BytesOneReader(), viewer.wb.BytesOneReader())
+						if us.parseTime != 1000 || us.qp.cdTrack != 7 || !bytes.Equal(queueBytes(us.rb), record[:cut]) || !bytes.Equal(viewer.wb.BytesOneReader(), good) {
+							t.Fatalf("progress changed clock or consumed partial record: clock=%d pending=%x forwarded=%x", us.parseTime, queueBytes(us.rb), viewer.wb.BytesOneReader())
 						}
 						if _, err := us.rb.WriteFull(record[cut:]); err != nil {
 							t.Fatal(err)
@@ -90,7 +90,7 @@ func TestMVDNoProgressKeepsRebuffering(t *testing.T) {
 			if err := us.parseMVD(); err != nil {
 				t.Fatal(err)
 			}
-			if us.parseTime != 3000 || !bytes.Equal(us.rb.BytesOneReader(), partial) || viewer.wb.Length() != 0 {
+			if us.parseTime != 3000 || !bytes.Equal(queueBytes(us.rb), partial) || viewer.wb.Length() != 0 {
 				t.Fatal("no-progress buffering or partial retention changed")
 			}
 		}
@@ -182,7 +182,7 @@ func TestMVDFileDoesNotRebuffer(t *testing.T) {
 	if err := us.parseMVD(); err != nil || us.parseTime != 1000 {
 		t.Fatal("file progress changed the playback clock", err)
 	}
-	if !bytes.Equal(us.rb.BytesOneReader(), []byte{0}) || !bytes.Equal(viewer.wb.BytesOneReader(), good) {
+	if !bytes.Equal(queueBytes(us.rb), []byte{0}) || !bytes.Equal(viewer.wb.BytesOneReader(), good) {
 		t.Fatal("file partial tail or completed record changed")
 	}
 }

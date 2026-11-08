@@ -163,7 +163,7 @@ func inspectMVDRecord(c *byteCursor, elapsed bool) (int, byte, mvdRecordStatus) 
 	}
 	n := int(size) + offset + 4
 	if c.left < n {
-		return 0, 0, mvdRecordIncomplete
+		return n, 0, mvdRecordIncomplete
 	}
 	return n, stamp, mvdRecordComplete
 }
@@ -187,7 +187,10 @@ func consistantMVD(b []byte, elapsed bool) (available int, milliseconds int64) {
 func consistantMVDMessage(b []byte, elapsed bool) (bool, int, byte) {
 	cur := byteViewOf(b).cursor(0)
 	n, ms, state := inspectMVDRecord(&cur, elapsed)
-	return state != mvdRecordComplete, n, ms
+	if state != mvdRecordComplete {
+		return true, 0, 0
+	}
+	return false, n, ms
 }
 
 func (us *uStream) gameInProgress() bool {
@@ -253,24 +256,22 @@ func (us *uStream) parseMVD() (err error) {
 		err = multierror.Prefix(err, "uStream.parseMVD:")
 	}()
 
-	b := us.rb.BytesOneReader()
+	view := us.rb.snapshot()
+	defer view.release()
+	cur := view.cursor(0)
 	totalDiscard := 0
 	var totalMS int64
-	view := byteViewOf(b)
-	defer view.release()
 	demoSpeed, isLowLatency := us.guessPlaybackSpeed(view)
 
 	for isLowLatency || us.curTime >= us.parseTime {
-		cur := byteViewOf(b).cursor(0)
-		_, rawMS, _ := inspectMVDRecord(&cur, us.isTCP() && us.qp.extFlagsMVD1&mvdPext1HiddenMessages != 0)
-		done, discard, packetTime, err := us.parseMVDMessage(b, demoSpeed, isLowLatency)
-		if err != nil {
-			return err
+		n, rawMS, state := inspectMVDRecord(&cur, us.isTCP() && us.qp.extFlagsMVD1&mvdPext1HiddenMessages != 0)
+		if state == mvdRecordInvalid {
+			return errors.New("corrupted MVD stream")
 		}
-		totalDiscard += discard
-
-		if done {
-			// If IO error detected and nothing to parse - then we have to reconnect.
+		if state == mvdRecordIncomplete {
+			if n > us.rb.Capacity() || (totalDiscard == 0 && view.size == us.rb.Capacity()) {
+				return errors.New("MVD record exceeds input queue size")
+			}
 			if us.ioError && totalDiscard == 0 {
 				return errors.New("IO error detected and input buffer is empty")
 			}
@@ -280,13 +281,19 @@ func (us *uStream) parseMVD() (err error) {
 			}
 			break
 		}
+		// Hidden elapsed-time records retain their legacy 13-byte lookahead.
+		b := cur.read(max(n, min(13, cur.left)), &us.mvdScratch)
+		_, discard, packetTime, err := us.parseMVDMessage(b, demoSpeed, isLowLatency)
+		if err != nil {
+			return err
+		}
+		totalDiscard += discard
 		totalMS += int64(rawMS)
-		// We're about to destroy this data, so it had better be forwarded by now!
-		b[0] = packetTime // Adjust packet time according to our demospeed.
+		b[0] = packetTime
 		if err := us.sendMVDDataDown(b[:discard]); err != nil {
 			return err
 		}
-		b = b[discard:]
+		cur.skip(discard)
 	}
 
 	if err = us.rb.Discard(totalDiscard); err != nil {
