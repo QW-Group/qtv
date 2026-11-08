@@ -15,6 +15,7 @@ import (
 	"github.com/markphelps/optional"
 	"github.com/qw-group/qtv/pkg/info"
 	"github.com/rs/zerolog/log"
+	"github.com/soheilhy/cmux"
 	"go.uber.org/atomic"
 )
 
@@ -610,7 +611,12 @@ func (ds *dStream) ioWriter(ctx context.Context) (err error) {
 	}()
 	defer func() { err = multierror.Prefix(err, "dStream.ioWriter:") }()
 
-	_, err = ds.wb.writeToWithContext(ctx, ds.conn, ds.writeReady)
+	var writer io.Writer = ds.conn
+	if conn, ok := ds.conn.(*cmux.MuxConn); ok {
+		// Only unwrap writes: reads must retain cmux's sniffed input prefix.
+		writer = conn.Conn
+	}
+	_, err = ds.wb.writeToWithContext(ctx, writer, ds.writeReady)
 	if err == nil {
 		err = io.EOF
 	}

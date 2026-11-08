@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"sync"
 )
 
@@ -200,19 +201,30 @@ func (q *byteQueue) Discard(n int) error {
 	return nil
 }
 
+// appendSpansLocked borrows n committed bytes into consumer-owned descriptors.
+// The caller holds mu; payload blocks remain live until that consumer discards them.
+func (q *byteQueue) appendSpansLocked(parts [][]byte, n int) [][]byte {
+	for i, b := range q.blocks {
+		if n == 0 {
+			break
+		}
+		start := 0
+		if i == 0 {
+			start = q.head
+		}
+		size := min(n, b.used-start)
+		parts = append(parts, b.data[start:start+size])
+		n -= size
+	}
+	return parts
+}
+
 // snapshot borrows stable committed spans until the consumer discards or resets.
 // There must be no other snapshot/IO consumer until this view is released.
 func (q *byteQueue) snapshot() byteView {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.viewParts = q.viewParts[:0]
-	for i, b := range q.blocks {
-		start := 0
-		if i == 0 {
-			start = q.head
-		}
-		q.viewParts = append(q.viewParts, b.data[start:b.used])
-	}
+	q.viewParts = q.appendSpansLocked(q.viewParts[:0], q.length)
 	return byteView{parts: q.viewParts, size: q.length}
 }
 
@@ -297,6 +309,10 @@ func (q *byteQueue) WriteToWithContext(ctx context.Context, w io.Writer) (int64,
 	return q.writeToWithContext(ctx, w, nil)
 }
 
+// Limit one gathered TCP operation so slow viewers still return progress/error
+// without borrowing an entire large initial-state queue in one WriteTo call.
+const queueTCPWriteLimit = 64 * 1024
+
 // writeToWithContext optionally waits for a consumer tick between entire queued
 // prefixes. A batch spans any number of blocks; positive writes still report
 // progress immediately, independently of the next-batch permit.
@@ -309,6 +325,8 @@ func (q *byteQueue) writeToWithContext(ctx context.Context, w io.Writer, batchPe
 	q.writing = true
 	q.mu.Unlock()
 	defer func() { q.mu.Lock(); q.writing = false; q.mu.Unlock() }()
+	_, gather := w.(*net.TCPConn)
+	var spans net.Buffers
 	for {
 		if err := ctx.Err(); err != nil {
 			return total, err
@@ -331,9 +349,27 @@ func (q *byteQueue) writeToWithContext(ctx context.Context, w io.Writer, batchPe
 			}
 			q.mu.Lock()
 			b := q.blocks[0]
-			p := b.data[q.head : q.head+min(b.used-q.head, remaining)]
+			size := remaining
+			if gather {
+				size = min(size, queueTCPWriteLimit)
+			}
+			p := b.data[q.head : q.head+min(b.used-q.head, size)]
+			if gather && len(p) < size {
+				spans = q.appendSpansLocked(spans[:0], size)
+			}
 			q.mu.Unlock()
-			n, err := w.Write(p)
+			var n int
+			var err error
+			if len(spans) > 0 {
+				// Buffers.WriteTo mutates its descriptors, not the borrowed payload.
+				buffers := spans
+				written, writeErr := buffers.WriteTo(w)
+				n, err = int(written), writeErr
+				clear(spans)
+				spans = spans[:0]
+			} else {
+				n, err = w.Write(p)
+			}
 			if n > 0 {
 				q.mu.Lock()
 				q.discardLocked(n)
