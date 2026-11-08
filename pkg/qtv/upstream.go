@@ -56,6 +56,7 @@ type uStream struct {
 	cancelFunc          context.CancelFunc        // Cancel func for ctx above.
 	io                  uStreamIO                 // Wrapper around IO so we can use TCP or file in some abstract way.
 	ioError             bool                      // True if IO error detected.
+	readReady           chan struct{}             // Central tick permits the next short TCP read batch.
 	ioECh               chan error                // This channel used for receiving IO errors from ioReader/ioWriter goroutines.
 	ussNotifyCh         chan<- interface{}        // Send id there when we about to quit so uStreamStorage will do clean up.
 	reconnectDelay      time.Duration             // Delay between connections.
@@ -120,6 +121,9 @@ func newUStream(qtv *QTV, ussNotifyCh chan<- interface{}, server string, ussName
 		rb:              rb,
 		wb:              wb,
 		mvdHdr:          newNetMsgW(make([]byte, 16), false),
+	}
+	if us.isTCP() {
+		us.readReady = make(chan struct{}, 1)
 	}
 	us.qp = newQProtocol(us)
 
@@ -258,6 +262,10 @@ func (us *uStream) setState(state uStreamState) (err error) {
 		us.unlinkAllDownstreams()
 		us.mu.Lock()
 	case usInitial:
+		select {
+		case <-us.readReady:
+		default:
+		}
 		us.mvdTime.reset()
 		us.mvdScratch = nil
 		us.parseTime = 0
@@ -1118,6 +1126,7 @@ func (us *uStream) mainLoopIteration(ctx context.Context) (err error) {
 		us.qtv.tick.L.Lock()
 		us.qtv.tick.Wait()
 		us.qtv.tick.L.Unlock()
+		notifyQueue(us.readReady)
 	}
 }
 
@@ -1350,7 +1359,7 @@ func (us *uStream) ioReader(ctx context.Context) (err error) {
 	}()
 	defer func() { err = multierror.Prefix(err, "uStream.ioReader:") }()
 
-	_, err = us.rb.ReadFromWithContext(ctx, us.io)
+	_, err = us.rb.readFromWithContext(ctx, us.io, us.readReady)
 	if err == nil {
 		err = io.EOF
 	}

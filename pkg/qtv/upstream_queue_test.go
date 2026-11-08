@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -171,12 +172,13 @@ func TestUpstreamQueueSettingsAndReset(t *testing.T) {
 		t.Fatal("file configured cap")
 	}
 	tcp.rb.WriteFull([]byte("old"))
+	notifyQueue(tcp.readReady)
 	tcp.mvdTime.valid = true
 	tcp.mvdScratch = make([]byte, 123)
 	if e := tcp.setState(usInitial); e != nil {
 		t.Fatal(e)
 	}
-	if tcp.rb.Capacity() != 4*1024*1024 || tcp.rb.Length() != 0 || len(tcp.mvdScratch) != 0 || tcp.mvdTime.valid || len(tcp.rb.dataReady) != 0 {
+	if tcp.rb.Capacity() != 4*1024*1024 || tcp.rb.Length() != 0 || len(tcp.mvdScratch) != 0 || tcp.mvdTime.valid || len(tcp.rb.dataReady) != 0 || len(tcp.readReady) != 0 {
 		t.Fatal("reconnect changed budget or retained data")
 	}
 }
@@ -296,4 +298,45 @@ func TestUpstreamQueueFilePrefetch(t *testing.T) {
 		t.Fatal("file worker leaked")
 	}
 	us.rb.Reset()
+}
+
+// Short TCP fragments are grouped by the source consumer instead of waking the
+// reader for every packet. A short read is not EOF and must retain its data.
+func TestUpstreamQueueGroupsShortTCPReads(t *testing.T) {
+	us, err := newUStream(queueTestQTV(), nil, "tcp:localhost:1234", "test", 1, uStreamOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer us.cancel()
+	a, b := net.Pipe()
+	us.io.(*uStreamTCP).conn = a
+	us.ioECh = make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- us.ioReader(ctx) }()
+	defer func() {
+		cancel()
+		a.Close()
+		b.Close()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("reader ignored cancellation")
+		}
+	}()
+	if _, err := b.Write([]byte("ab")); err != nil {
+		t.Fatal(err)
+	}
+	b.SetWriteDeadline(time.Now().Add(40 * time.Millisecond))
+	if n, err := b.Write([]byte("cd")); n != 0 || err == nil {
+		t.Fatalf("short reads were not grouped: second fragment accepted, n=%d err=%v", n, err)
+	}
+	if got := queueBytes(us.rb); string(got) != "ab" {
+		t.Fatalf("accepted input changed: %q", got)
+	}
+	b.SetWriteDeadline(time.Now().Add(time.Second))
+	notifyQueue(us.readReady)
+	if _, err := b.Write([]byte("cd")); err != nil {
+		t.Fatal("reader did not resume on the consumer tick", err)
+	}
 }

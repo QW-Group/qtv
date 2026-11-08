@@ -85,6 +85,41 @@ func TestByteQueueInputCoalescesWithoutBlockPacing(t *testing.T) {
 	}
 }
 
+// Even a TCP reader with no consumer permits must accept an entire full-block burst.
+func TestByteQueueReadPermitDoesNotPaceFullBlocks(t *testing.T) {
+	q := mustByteQueue(128*1024, 1024)
+	data := bytes.Repeat([]byte("abcd"), 16*1024)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	n, err := q.readFromWithContext(ctx, bytes.NewReader(data), make(chan struct{}))
+	if err != nil || n != int64(len(data)) || !bytes.Equal(queueBytes(q), data) {
+		t.Fatal("full reads waited for a consumer permit", n, err)
+	}
+}
+
+// terminalQueueReader returns a final short prefix together with its terminal error.
+type terminalQueueReader struct{ err error }
+
+func (r terminalQueueReader) Read(p []byte) (int, error) {
+	return copy(p, "end"), r.err
+}
+
+func TestByteQueueReadPermitRetainsTerminalData(t *testing.T) {
+	for _, err := range []error{io.EOF, io.ErrClosedPipe} {
+		q := mustByteQueue(16, 8)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		n, gotErr := q.readFromWithContext(ctx, terminalQueueReader{err}, make(chan struct{}))
+		cancel()
+		wantErr := err
+		if err == io.EOF {
+			wantErr = nil
+		}
+		if gotErr != wantErr || n != 3 || string(queueBytes(q)) != "end" {
+			t.Fatal("terminal read waited for a tick or lost bytes", n, gotErr)
+		}
+	}
+}
+
 func TestByteQueueFullCancellation(t *testing.T) {
 	q := mustByteQueue(4, 4)
 	q.WriteFull([]byte("full"))

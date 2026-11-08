@@ -235,7 +235,14 @@ func (q *byteQueue) Reset() {
 
 // ReadFromWithContext copies outside-lock reads into the available byte budget.
 // The owner must close the reader to interrupt a blocked Read on cancellation.
-func (q *byteQueue) ReadFromWithContext(ctx context.Context, r io.Reader) (total int64, err error) {
+func (q *byteQueue) ReadFromWithContext(ctx context.Context, r io.Reader) (int64, error) {
+	return q.readFromWithContext(ctx, r, nil)
+}
+
+// readFromWithContext optionally groups short reads on consumer ticks. Full
+// reads continue immediately, so a permit never caps input at one block/tick.
+// A short read is only a scheduling hint; its bytes and errors retain normal IO semantics.
+func (q *byteQueue) readFromWithContext(ctx context.Context, r io.Reader, readPermit <-chan struct{}) (total int64, err error) {
 	q.mu.Lock()
 	if q.reading {
 		q.mu.Unlock()
@@ -273,6 +280,13 @@ func (q *byteQueue) ReadFromWithContext(ctx context.Context, r io.Reader) (total
 		}
 		if n == 0 {
 			return total, io.ErrNoProgress
+		}
+		if readPermit != nil && n < avail {
+			select {
+			case <-ctx.Done():
+				return total, ctx.Err()
+			case <-readPermit:
+			}
 		}
 	}
 }
