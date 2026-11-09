@@ -1,6 +1,7 @@
 package qtv
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -109,21 +110,22 @@ func (ds *dStream) processClientInputMsg() (done bool, err error) {
 		return true, fmt.Errorf("invalid state: %v", state)
 	}
 
-	msg := newNetMsgR(ds.rb.BytesOneReader(), false)
-	if msg.BLen() < 2 {
+	view := ds.rb.snapshot()
+	defer view.release()
+	cur := view.cursor(0)
+	if cur.left < 2 {
 		return true, nil // Not enough data, wait for it.
 	}
-	len := int(msg.GetUint16())
-	if msg.error {
-		return true, fmt.Errorf("invalid input: read error")
+	var header [2]byte
+	length := int(binary.LittleEndian.Uint16(cur.peek(2, header[:])))
+	if length > ds.rb.Capacity() || length < 3 { // Two bytes for len and one for clc.
+		return true, fmt.Errorf("invalid input: len = %v", length)
 	}
-	// If len is greater than capacity of our buffer - that is a no-go.
-	if len > ds.rb.Capacity() || len < 3 { // 3 = two bytes for len and one byte for clc.
-		return true, fmt.Errorf("invalid input: len = %v", len)
-	}
-	if len > msg.BLen() {
+	if length > cur.left {
 		return true, nil // Not enough data, wait for it.
 	}
+	msg := newNetMsgR(cur.read(length, &ds.commandScratch), false)
+	msg.GetUint16()
 
 	clc := clcType(msg.GetByte())
 	switch clc {
@@ -140,7 +142,7 @@ func (ds *dStream) processClientInputMsg() (done bool, err error) {
 		log.Trace().Str("ctx", "dStream").Uint32("id", uint32(ds.id)).Str("event", "unknownClc").Uint8("clc", uint8(clc)).Msg("")
 	}
 
-	return false, ds.rb.Discard(int(len))
+	return false, ds.rb.Discard(length)
 }
 
 // Send text as "svc_print" to particular dStream.
@@ -346,7 +348,7 @@ func (ds *dStream) nextDownloadDo() (done bool, err error) {
 
 	sendBytes := i64.Min(fileTransferSize, ds.download.size-ds.download.current)
 
-	if int64(ds.wb.Length())+sendBytes > int64(ds.wb.Capacity()*2/3) {
+	if int64(ds.wb.Length())+sendBytes > int64(ds.wb.Capacity())*2/3 {
 		return true, nil // Done, no free space right now.
 	}
 

@@ -8,7 +8,6 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/markphelps/optional v0.11.0
-	github.com/qqshka/ringbuffer v0.0.0-20211204021706-a7e2a274a9f4
 	github.com/rs/zerolog v1.35.1
 	github.com/soheilhy/cmux v0.1.5
 	github.com/zeebo/xxh3 v1.1.0

@@ -1,7 +1,6 @@
 package qtv
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha512"
 	"encoding/base64"
@@ -12,11 +11,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/markphelps/optional"
-	"github.com/qqshka/ringbuffer"
 	"github.com/qw-group/qtv/pkg/info"
 	"github.com/qw-group/qtv/pkg/qfs"
 	"github.com/rs/zerolog/log"
@@ -42,7 +41,7 @@ type uStream struct {
 	// Particularly when dStream trying to "link" (inserted inside linkedDs map) with uStream it
 	// should be done only when uStream state is higher than closing_uStreamState, so state change require locking as well.
 	// When we accessing linkedDs we also should lock mutex since both dStream and uStream sharing it.
-	mu       ringbuffer.Mutex
+	mu       sync.Mutex
 	state    uStreamState           // Stream state.
 	linkedDs map[dStreamId]*dStream // Linked dStreams we know about.
 	// }
@@ -57,13 +56,16 @@ type uStream struct {
 	cancelFunc          context.CancelFunc        // Cancel func for ctx above.
 	io                  uStreamIO                 // Wrapper around IO so we can use TCP or file in some abstract way.
 	ioError             bool                      // True if IO error detected.
+	readReady           chan struct{}             // Central tick permits the next short TCP read batch.
 	ioECh               chan error                // This channel used for receiving IO errors from ioReader/ioWriter goroutines.
 	ussNotifyCh         chan<- interface{}        // Send id there when we about to quit so uStreamStorage will do clean up.
 	reconnectDelay      time.Duration             // Delay between connections.
+	mvdScratch          []byte                    // Reused only for MVD records crossing input blocks.
+	mvdTime             mvdTimeCache              // Original queued MVD time, owned by this source consumer.
 	parseTime           uint64                    // Time in milliseconds since we started parsing MVD stream, increased each time we successfully parsed MVD message.
 	curTime             uint64                    // Current QTV time in milliseconds.
-	rb                  *ringbuffer.RingBuffer    // Input buffer from upstream.
-	wb                  *ringbuffer.RingBuffer    // Output buffer to upstream.
+	rb                  *byteQueue                // Input buffer from upstream.
+	wb                  *byteQueue                // Output buffer to upstream.
 	hp                  uHeaderParse              // Initial headers handshake.
 	qp                  *qProtocol                // Quake protocol, we stored parsed data from upstream here, also used for generating quake protocol messages.
 	mvdHdr              *netMsgW                  // MVD header we use frequently for writing data to downstream(s).
@@ -86,6 +88,20 @@ func newUStream(qtv *QTV, ussNotifyCh chan<- interface{}, server string, ussName
 		return nil, err
 	}
 
+	readLimit := qtv.qvs.Get("ustream_read_buf_size").Int
+	if _, file := usIO.(*uStreamFile); file {
+		readLimit = min(readLimit, localMVDReadAheadLimit)
+	}
+	rb, err := newByteQueue(readLimit, 64*1024)
+	if err != nil {
+		return nil, err
+	}
+
+	wb, err := newByteQueue(qtv.qvs.Get("ustream_write_buf_size").Int, 4*1024)
+	if err != nil {
+		return nil, err
+	}
+
 	ctx, cancel := context.WithCancel(qtv.ctx)
 
 	us = &uStream{
@@ -102,9 +118,12 @@ func newUStream(qtv *QTV, ussNotifyCh chan<- interface{}, server string, ussName
 		dsInputNotifyCh: make(chan dStreamId, qtvMaxClients),
 		linkedDs:        map[dStreamId]*dStream{},
 		reconnectDelay:  initialReconnectDelay,
-		rb:              ringbuffer.NewExtended(qtv.qvs.Get("ustream_read_buf_size").Int, false, true),   // Underlying buffer is two times more.
-		wb:              ringbuffer.NewExtended(qtv.qvs.Get("ustream_write_buf_size").Int, false, false), // Underlying buffer is two times more.
+		rb:              rb,
+		wb:              wb,
 		mvdHdr:          newNetMsgW(make([]byte, 16), false),
+	}
+	if us.isTCP() {
+		us.readReady = make(chan struct{}, 1)
 	}
 	us.qp = newQProtocol(us)
 
@@ -115,6 +134,9 @@ func newUStream(qtv *QTV, ussNotifyCh chan<- interface{}, server string, ussName
 
 	return us, nil
 }
+
+// Local demos need bounded file prefetch, independently of live parse_delay.
+const localMVDReadAheadLimit = 320 * 1024
 
 // Upstream id.
 type uStreamId uint32
@@ -240,6 +262,12 @@ func (us *uStream) setState(state uStreamState) (err error) {
 		us.unlinkAllDownstreams()
 		us.mu.Lock()
 	case usInitial:
+		select {
+		case <-us.readReady:
+		default:
+		}
+		us.mvdTime.reset()
+		us.mvdScratch = nil
 		us.parseTime = 0
 
 		us.hp.setState(invalid_uHeaderParseState)
@@ -256,6 +284,7 @@ func (us *uStream) setState(state uStreamState) (err error) {
 	case usParsingHeader:
 		us.hp.setState(version_uHeaderParseState)
 	case usParsingConnection:
+		us.mvdTime.reset()
 		us.parseTime = us.curTime + (uint64)(us.expectedIngameDelay()*1000)
 		// Reset reader storage. Should be done on each map load.
 		us.qp.protocolReaderData.reset()
@@ -523,7 +552,7 @@ func (us *uStream) sendClcStringCmdf(format string, a ...interface{}) (err error
 		return errors.New("netMsg with error")
 	}
 
-	if us.wb.Length()+msg.WPos() > us.wb.Capacity() {
+	if msg.WPos() > us.wb.Available() {
 		return errors.New("command skipped since it could overflow upstream buffer")
 	}
 
@@ -1052,9 +1081,13 @@ func (us *uStream) mainLoopIteration(ctx context.Context) (err error) {
 			return ctx.Err()
 		case err := <-us.ioECh:
 			us.ioError = true
-			// If we successfully completed headers parsing (connected to remote) then we better
-			// process incoming buffer and only then report error, that mostly useful for demos.
-			// If we did not complete connection then report error right now.
+			// Consume an accepted handshake before terminal IO tears down a finite
+			// source. Once connected, the normal parser drains the queued MVD.
+			if us.getState() == usParsingHeader {
+				if parseErr := us.processRead(); parseErr != nil {
+					return parseErr
+				}
+			}
 			if us.getState() < usParsingConnection {
 				return err
 			}
@@ -1062,7 +1095,7 @@ func (us *uStream) mainLoopIteration(ctx context.Context) (err error) {
 		}
 		// Checking IO notify separately so it does not affect error detection.
 		select {
-		case <-us.rb.WC:
+		case <-us.rb.dataReady:
 			//Empty.
 		default:
 		}
@@ -1093,6 +1126,7 @@ func (us *uStream) mainLoopIteration(ctx context.Context) (err error) {
 		us.qtv.tick.L.Lock()
 		us.qtv.tick.Wait()
 		us.qtv.tick.L.Unlock()
+		notifyQueue(us.readReady)
 	}
 }
 
@@ -1115,21 +1149,23 @@ func (us *uStream) processRead() (err error) {
 func (us *uStream) parseHeader() (err error) {
 	defer func() { err = multierror.Prefix(err, "uStream.parseHeader:") }()
 
-	// We does not know how much bytes to read until new line so we get whole buffer.
-	bb := us.rb.BytesOneReader()
+	view := us.rb.snapshot()
+	defer view.release()
+	cur := view.cursor(0)
+	var scratch []byte
 	discard := 0
 
 	for us.getState() == usParsingHeader {
-		nl := bytes.IndexByte(bb, '\n')
-		if nl < 0 {
+		n := cur.lineSize()
+		if n == 0 {
+			if discard == 0 && view.size == us.rb.Capacity() {
+				return errors.New("QTV header line exceeds input queue size")
+			}
 			break
 		}
-		// Accumulate how much bytes to skip from ringbuffer.
-		discard += nl + 1
-		// Data until new line.
-		b := bb[:nl]
-		// Data after new line.
-		bb = bb[nl+1:]
+		b := cur.read(n, &scratch)[:n-1]
+		cur.skip(n)
+		discard += n
 
 		switch us.hp.state {
 		case version_uHeaderParseState:
@@ -1323,7 +1359,7 @@ func (us *uStream) ioReader(ctx context.Context) (err error) {
 	}()
 	defer func() { err = multierror.Prefix(err, "uStream.ioReader:") }()
 
-	_, err = us.rb.ReadFromWithContext(ctx, us.io)
+	_, err = us.rb.readFromWithContext(ctx, us.io, us.readReady)
 	if err == nil {
 		err = io.EOF
 	}

@@ -3,12 +3,10 @@ package qtv
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
-	"strings"
 	"testing"
-
-	"github.com/qqshka/ringbuffer"
 )
 
 // soundTestProtocol creates the real reader/writer without an upstream network connection.
@@ -226,7 +224,7 @@ func TestSoundCatalogQueueSizes(t *testing.T) {
 			}
 			err := ds.linkedUs.qp.sendList(ds, ds.linkedUs.qp.soundList[:], svc_soundlist, protocolSvc(56))
 			if test.wantOverflow {
-				if err == nil || !strings.Contains(err.Error(), "too many data") {
+				if err == nil || !errors.Is(err, errByteQueueFull) {
 					t.Fatalf("expected bounded queue overflow, got %v", err)
 				}
 			} else if err != nil {
@@ -236,7 +234,7 @@ func TestSoundCatalogQueueSizes(t *testing.T) {
 	}
 }
 
-// soundTestDownstream uses the production list serializer and ring buffer with no network mocks.
+// soundTestDownstream uses the production list serializer and byte queue with no network mocks.
 func soundTestDownstream(capacity, count int) *dStream {
 	qp := soundTestProtocol()
 	us := &uStream{state: usActive, qp: qp, mvdHdr: newNetMsgW(make([]byte, 16), false)}
@@ -244,22 +242,22 @@ func soundTestDownstream(capacity, count int) *dStream {
 	for i := 1; i <= count; i++ {
 		qp.soundList[i] = fmt.Sprintf("sound/%053d.wav", i) // 63 bytes, MVDSV's longest path.
 	}
-	return &dStream{state: dsNeedSoundList, linkedUs: us, wb: ringbuffer.New(capacity)}
+	return &dStream{state: dsNeedSoundList, linkedUs: us, wb: mustByteQueue(capacity, 16*1024)}
 }
 
 // TestSoundCatalogSmallQueueFails explicitly rejects pressure instead of dropping sound chunks.
 func TestSoundCatalogSmallQueueFails(t *testing.T) {
 	ds := soundTestDownstream(1024, 4095)
 	err := ds.linkedUs.qp.sendList(ds, ds.linkedUs.qp.soundList[:], svc_soundlist, protocolSvc(56))
-	if err == nil || !strings.Contains(err.Error(), "too many data") {
+	if err == nil || !errors.Is(err, errByteQueueFull) {
 		t.Fatalf("expected bounded queue failure, got %v", err)
 	}
 }
 
 // TestSoundQueueOverflowIsIsolated keeps upstream and other viewers alive after a queue fills.
 func TestSoundQueueOverflowIsIsolated(t *testing.T) {
-	bad := &dStream{id: 1, state: dsActive, wb: ringbuffer.New(128)}
-	good := &dStream{id: 2, state: dsActive, wb: ringbuffer.New(4096)}
+	bad := &dStream{id: 1, state: dsActive, wb: mustByteQueue(128, 16*1024)}
+	good := &dStream{id: 2, state: dsActive, wb: mustByteQueue(4096, 16*1024)}
 	us := &uStream{state: usActive, linkedDs: map[dStreamId]*dStream{1: bad, 2: good}}
 	payload := bytes.Repeat([]byte{42}, 1024)
 	for i := 0; i < 2; i++ {
@@ -270,7 +268,7 @@ func TestSoundQueueOverflowIsIsolated(t *testing.T) {
 	if !bad.isCanceled() || good.isCanceled() || us.state != usActive {
 		t.Fatal("queue failure did not stay isolated to the overflowing viewer")
 	}
-	if !bytes.Equal(good.wb.BytesOneReader(), bytes.Repeat(payload, 2)) {
+	if !bytes.Equal(queueBytes(good.wb), bytes.Repeat(payload, 2)) {
 		t.Fatal("healthy viewer lost forwarded bytes")
 	}
 }
@@ -393,7 +391,7 @@ func TestLateViewerSoundCatalog(t *testing.T) {
 			catalog := make([]string, 4096)
 			foundAmbient := false
 			foundServerData := false
-			data := ds.wb.BytesOneReader()
+			data := queueBytes(ds.wb)
 			for len(data) != 0 {
 				if len(data) < 6 {
 					t.Fatal("truncated MVD header")

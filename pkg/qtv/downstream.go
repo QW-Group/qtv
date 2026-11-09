@@ -1,7 +1,6 @@
 package qtv
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -14,9 +13,9 @@ import (
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/markphelps/optional"
-	"github.com/qqshka/ringbuffer"
 	"github.com/qw-group/qtv/pkg/info"
 	"github.com/rs/zerolog/log"
+	"github.com/soheilhy/cmux"
 	"go.uber.org/atomic"
 )
 
@@ -27,34 +26,47 @@ import (
 
 // Downstream representation object.
 type dStream struct {
-	id                   dStreamId              // Stream id.
-	qtv                  *QTV                   // Parent object.
-	state                dStreamState           // Stream state.
-	cancelFunc           context.CancelFunc     // Context cancel func.
-	canceled             atomic.Bool            // True if context was canceled with cancel func.
-	conn                 net.Conn               // Network connection with downstream.
-	ioECh                chan error             // This channel used for receiving IO errors from ioReader/ioWriter goroutines.
-	dssNotifyCh          chan<- dStreamId       // Send id there when we about to quit so dStreamStorage will do clean up.
-	rb                   *ringbuffer.RingBuffer // Input buffer from downsstream.
-	wb                   *ringbuffer.RingBuffer // Output buffer to downstream.
-	headers              map[string]string      // Initial handshake headers.
-	qtvEzQuakeExt        uint32                 // ezQuake extensions mask this downstream support.
-	authChallenge        []byte                 // Auth challenge used for this downstream (if any).
-	flushAndExit         bool                   // True when we have to flush output buffer before closing connection.
-	flushData            *strings.Reader        // Extra data we have to flush besides output buffer.
-	linkedUs             *uStream               // Non nil if we successfully linked (registered) with upstream.
-	download             dStreamDownload        // Download related data.
-	connectedAtLeastOnce bool                   // True if connection sequence was completed at least once.
-	userInfo             info.InfoTs            // Client userinfo (used for name and similar things).
-	fp                   floodProtect           // Say flood protection data.
-	pov                  optional.Int           // Player slot this dStream tracks, optional.
-	followId             dStreamId              // id of followed dStream, zero if not following.
-	connectStart         uint64                 // Time when donstream connected.
+	id                   dStreamId          // Stream id.
+	qtv                  *QTV               // Parent object.
+	state                dStreamState       // Stream state.
+	cancelFunc           context.CancelFunc // Context cancel func.
+	canceled             atomic.Bool        // True if context was canceled with cancel func.
+	conn                 net.Conn           // Network connection with downstream.
+	ioECh                chan error         // This channel used for receiving IO errors from ioReader/ioWriter goroutines.
+	dssNotifyCh          chan<- dStreamId   // Send id there when we about to quit so dStreamStorage will do clean up.
+	rb                   *byteQueue         // Input buffer from downsstream.
+	wb                   *byteQueue         // Output buffer to downstream.
+	writeReady           chan struct{}      // Central tick permits the next whole output batch.
+	headers              map[string]string  // Initial handshake headers.
+	qtvEzQuakeExt        uint32             // ezQuake extensions mask this downstream support.
+	authChallenge        []byte             // Auth challenge used for this downstream (if any).
+	flushAndExit         bool               // True when we have to flush output buffer before closing connection.
+	flushData            *strings.Reader    // Extra data we have to flush besides output buffer.
+	linkedUs             *uStream           // Non nil if we successfully linked (registered) with upstream.
+	download             dStreamDownload    // Download related data.
+	connectedAtLeastOnce bool               // True if connection sequence was completed at least once.
+	userInfo             info.InfoTs        // Client userinfo (used for name and similar things).
+	fp                   floodProtect       // Say flood protection data.
+	pov                  optional.Int       // Player slot this dStream tracks, optional.
+	followId             dStreamId          // id of followed dStream, zero if not following.
+	commandScratch       []byte             // Reused only for commands crossing input blocks.
+	connectStart         uint64             // Time when donstream connected.
 }
 
 // Allocates new downsteam.
 func newDStream(qtv *QTV, dssNotifyCh chan<- dStreamId, conn net.Conn, dsId dStreamId) (ds *dStream, err error) {
 	defer func() { err = multierror.Prefix(err, "newDStream:") }()
+
+	rb, err := newByteQueue(qtv.qvs.Get("dstream_read_buf_size").Int, 4*1024)
+	if err != nil {
+		return nil, err
+	}
+	wb, err := newByteQueue(qtv.qvs.Get("dstream_write_buf_size").Int, 16*1024)
+	if err != nil {
+		return nil, err
+	}
+	// Keep a third spare to reduce allocation churn on larger output bursts.
+	wb.spareLimit = 3
 
 	ctx, cancel := context.WithCancel(qtv.ctx)
 
@@ -65,8 +77,9 @@ func newDStream(qtv *QTV, dssNotifyCh chan<- dStreamId, conn net.Conn, dsId dStr
 		conn:         conn,
 		dssNotifyCh:  dssNotifyCh,
 		ioECh:        make(chan error, 2),
-		rb:           ringbuffer.NewExtended(qtv.qvs.Get("dstream_read_buf_size").Int, false, true),  // Underlying buffer is two times more.
-		wb:           ringbuffer.NewExtended(qtv.qvs.Get("dstream_write_buf_size").Int, true, false), // Underlying buffer is two times more.
+		rb:           rb,
+		wb:           wb,
+		writeReady:   make(chan struct{}, 1),
 		connectStart: curTime(),
 	}
 
@@ -284,7 +297,7 @@ func (ds *dStream) sendReplyWithBuilder(flushAndExit bool, deadLine time.Time, b
 		return err
 	}
 
-	// Write header to the ring buffer.
+	// Write header to the output queue.
 	h := ds.qtvHeader()
 	if _, err = ds.wb.WriteFull([]byte(h)); err != nil {
 		return err
@@ -396,7 +409,7 @@ func (ds *dStream) mainLoop(ctx context.Context) (err error) {
 			return ctx.Err()
 		case err := <-ds.ioECh:
 			return err
-		case <-ds.rb.WC:
+		case <-ds.rb.dataReady:
 			if ds.linkedUs != nil {
 				// If we linked to upstream then notify upstream about input data and process it inside upstream mainLoop.
 				// That SIGNIFICANTLY simplify concurency.
@@ -409,16 +422,16 @@ func (ds *dStream) mainLoop(ctx context.Context) (err error) {
 					return err
 				}
 			}
-		case <-ds.wb.RC:
+		case <-ds.wb.writeProgress:
 			if ds.linkedUs != nil {
 				// Update dead line if we parsed header and successfully sending data.
 				deadLine := durationBound(1, ds.qtv.qvs.Get("dstream_timeout").Dur, 999999) * time.Second
 				ds.conn.SetDeadline(time.Now().Add(deadLine))
 			} else {
-				// If we have extra data to send append it to the ring buffer now.
+				// If we have extra data to send append it to the output queue now.
 				if ds.flushData != nil && ds.flushData.Len() > 0 {
 					if _, err := ds.flushData.WriteTo(ds.wb); err != nil {
-						if err != io.ErrShortWrite && err != ringbuffer.ErrTooManyDataToWrite {
+						if err != io.ErrShortWrite && err != errByteQueueFull {
 							return err
 						}
 					}
@@ -435,6 +448,7 @@ func (ds *dStream) mainLoop(ctx context.Context) (err error) {
 		ds.qtv.tick.L.Lock()
 		ds.qtv.tick.Wait()
 		ds.qtv.tick.L.Unlock()
+		notifyQueue(ds.writeReady)
 	}
 }
 
@@ -458,22 +472,24 @@ func (ds *dStream) processRead() (err error) {
 func (ds *dStream) parseHeader() (err error) {
 	defer func() { err = multierror.Prefix(err, "dStream.parseHeader:") }()
 
-	// We does not know how much bytes to read until new line so we get whole buffer.
-	bb := ds.rb.BytesOneReader()
+	view := ds.rb.snapshot()
+	defer view.release()
+	cur := view.cursor(0)
+	var scratch []byte
 	discard := 0
 	endOfRequest := false
 
 	for {
-		nl := bytes.IndexByte(bb, '\n')
-		if nl < 0 {
+		n := cur.lineSize()
+		if n == 0 {
+			if discard == 0 && view.size == ds.rb.Capacity() {
+				return errors.New("QTV header line exceeds input queue size")
+			}
 			break
 		}
-		// Accumulate how much bytes to skip from ringbuffer.
-		discard += nl + 1
-		// Data until new line.
-		b := bb[:nl]
-		// Data after new line.
-		bb = bb[nl+1:]
+		b := cur.read(n, &scratch)[:n-1]
+		cur.skip(n)
+		discard += n
 
 		// Empty 'b' means no more headers.
 		if len(b) == 0 {
@@ -597,7 +613,12 @@ func (ds *dStream) ioWriter(ctx context.Context) (err error) {
 	}()
 	defer func() { err = multierror.Prefix(err, "dStream.ioWriter:") }()
 
-	_, err = ds.wb.WriteToWithContext(ctx, ds.conn)
+	var writer io.Writer = ds.conn
+	if conn, ok := ds.conn.(*cmux.MuxConn); ok {
+		// Only unwrap writes: reads must retain cmux's sniffed input prefix.
+		writer = conn.Conn
+	}
+	_, err = ds.wb.writeToWithContext(ctx, writer, ds.writeReady)
 	if err == nil {
 		err = io.EOF
 	}

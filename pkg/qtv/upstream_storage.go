@@ -85,8 +85,8 @@ func (uss *uStreamStorage) regVars(qtv *QTV) {
 	qtv.qvs.Reg("parse_delay", "7")
 	qtv.qvs.Reg("maxservers", "100")
 	qtv.qvs.Reg("maxchains", "1")
-	qtv.qvs.Regf("ustream_read_buf_size", "%v", 1024*320)
-	qtv.qvs.Regf("ustream_write_buf_size", "%v", 1024*32)
+	qtv.qvs.RegEx("ustream_read_buf_size", 4*1024*1024, 0, onChangeQueueSize)
+	qtv.qvs.RegEx("ustream_write_buf_size", 1024*32, 0, onChangeQueueSize)
 	qtv.qvs.Reg("ustream_timeout", "60")
 }
 
