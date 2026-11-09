@@ -44,6 +44,95 @@ func TestDownstreamQueueFullHeader(t *testing.T) {
 		t.Fatal("full line waits forever")
 	}
 }
+
+// Bursts crossing 32 KiB must reuse the viewer's third block after warmup,
+// while larger peaks remain bounded and Reset releases the cached payload.
+func TestDownstreamQueueReusesThreeBlockBursts(t *testing.T) {
+	q := queueTestQTV()
+	(&dStreamStorage{}).regVars(q)
+	ctx, cancel := context.WithCancel(q.ctx)
+	cancel()
+	q.ctx = ctx
+	a, b := net.Pipe()
+	defer b.Close()
+	notify := make(chan dStreamId, 1)
+	ds, err := newDStream(q, notify, a, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-notify:
+	case <-time.After(time.Second):
+		t.Fatal("canceled viewer IO did not stop")
+	}
+	deadline := time.Now().Add(time.Second)
+	for !ds.isCanceled() {
+		if time.Now().After(deadline) {
+			t.Fatal("viewer cleanup did not finish")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	if ds.wb.blockSize != 16*1024 || ds.wb.Capacity() != 192*1024 || len(ds.wb.blocks) != 0 || len(ds.wb.spares) != 0 {
+		t.Fatal("viewer output must keep its lazy 16 KiB blocks and byte budget")
+	}
+	payload := make([]byte, 32*1024+1)
+	for i := range payload {
+		payload[i] = byte(i / 1024)
+	}
+	cycle := func() {
+		if _, err := ds.wb.WriteFull(payload); err != nil {
+			t.Fatal(err)
+		}
+		view := ds.wb.snapshot()
+		offset := 0
+		for _, part := range view.parts {
+			if !bytes.Equal(part, payload[offset:offset+len(part)]) {
+				t.Fatal("reused viewer blocks changed payload")
+			}
+			offset += len(part)
+		}
+		if offset != len(payload) {
+			t.Fatal("reused viewer blocks truncated payload")
+		}
+		view.release()
+		if err := ds.wb.Discard(len(payload)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cycle()
+	if n := testing.AllocsPerRun(100, cycle); n != 0 {
+		t.Fatalf("three-block viewer burst allocations: %g", n)
+	}
+	peak := make([]byte, ds.wb.Capacity())
+	if _, err := ds.wb.WriteFull(peak); err != nil {
+		t.Fatal(err)
+	}
+	if err := ds.wb.Discard(len(peak)); err != nil {
+		t.Fatal(err)
+	}
+	if len(ds.wb.blocks) != 0 || len(ds.wb.spares) != 3 {
+		t.Fatal("viewer retained peak output storage", len(ds.wb.spares))
+	}
+	ds.wb.Reset()
+	if ds.wb.Length() != 0 || len(ds.wb.blocks) != 0 || len(ds.wb.spares) != 0 {
+		t.Fatal("reset retained viewer payload")
+	}
+	cycle()
+	if n := testing.AllocsPerRun(100, cycle); n != 0 {
+		t.Fatalf("reset lost the viewer reuse budget: %g allocations", n)
+	}
+	if _, err := ds.rb.WriteFull(make([]byte, ds.rb.Capacity())); err != nil {
+		t.Fatal(err)
+	}
+	if err := ds.rb.Discard(ds.rb.Length()); err != nil {
+		t.Fatal(err)
+	}
+	if len(ds.rb.spares) != 2 {
+		t.Fatal("viewer input reuse budget changed", len(ds.rb.spares))
+	}
+}
+
 func TestDownstreamQueueReplyFlush(t *testing.T) {
 	q := queueTestQTV()
 	q.uss = &uStreamStorage{qtv: q}

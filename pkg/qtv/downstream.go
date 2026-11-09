@@ -65,6 +65,8 @@ func newDStream(qtv *QTV, dssNotifyCh chan<- dStreamId, conn net.Conn, dsId dStr
 	if err != nil {
 		return nil, err
 	}
+	// Keep a third spare to reduce allocation churn on larger output bursts.
+	wb.spareLimit = 3
 
 	ctx, cancel := context.WithCancel(qtv.ctx)
 

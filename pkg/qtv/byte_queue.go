@@ -28,7 +28,8 @@ type byteQueue struct {
 	length        int           // Queued bytes, including a head borrowed by WriteTo.
 	limit         int           // Logical budget captured at construction.
 	blockSize     int           // Allocation unit, clipped to the logical limit.
-	spares        [][]byte      // At most two drained blocks retained for reuse.
+	spareLimit    int           // Reuse budget in blocks, fixed before IO starts.
+	spares        [][]byte      // Drained storage, bounded by spareLimit.
 	viewParts     [][]byte      // Snapshot descriptors, owned by the single consumer.
 	reading       bool          // ReadFrom is the exclusive producer while active.
 	writing       bool          // WriteTo is the exclusive consumer while active.
@@ -43,7 +44,7 @@ func newByteQueue(limit, blockSize int) (*byteQueue, error) {
 		return nil, errors.New("byte queue sizes must be positive")
 	}
 	return &byteQueue{
-		limit: limit, blockSize: min(limit, blockSize),
+		limit: limit, blockSize: min(limit, blockSize), spareLimit: 2,
 		dataReady: make(chan struct{}, 1), spaceReady: make(chan struct{}, 1),
 		writeProgress: make(chan struct{}, 1),
 	}, nil
@@ -161,7 +162,7 @@ func (q *byteQueue) WriteString(s string) (int, error) {
 	return n, nil
 }
 
-// discardLocked releases consumed blocks, retaining at most two for reuse.
+// discardLocked releases consumed blocks, keeping only the bounded reuse reserve.
 func (q *byteQueue) discardLocked(n int) {
 	q.length -= n
 	removed := 0
@@ -174,7 +175,7 @@ func (q *byteQueue) discardLocked(n int) {
 		}
 		n -= avail
 		q.head = 0
-		if len(q.spares) < 2 {
+		if len(q.spares) < q.spareLimit {
 			q.spares = append(q.spares, b.data)
 		}
 		removed++
