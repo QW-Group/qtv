@@ -456,3 +456,86 @@ func TestLateViewerSoundCatalog(t *testing.T) {
 		})
 	}
 }
+
+// TestSoundForwardingIncludingZero checks sound records through the actual MVD parser and downstream queue.
+func TestSoundForwardingIncludingZero(t *testing.T) {
+	// Independent wire flag values; the decoder keeps its constants function-local.
+	const (
+		wireLargeEntity = 0x08
+		wireLargeSound  = 0x10
+	)
+	for _, profile := range []struct {
+		name       string
+		fte1, fte2 uint32
+	}{
+		{"legacy", 0, 0},
+		{"sounddbl", ftePextSoundDbl, 0},
+		{"rd", 0, ftePext2ReplacementDeltas},
+		{"rd+sounddbl", ftePextSoundDbl, ftePext2ReplacementDeltas},
+	} {
+		for _, floats := range []bool{false, true} {
+			for _, layout := range []struct {
+				name     string
+				extended bool
+				flags    byte
+			}{
+				{"legacy", false, 0},
+				{"packed", true, 0},
+				{"separate-entity", true, wireLargeEntity},
+				{"separate-entity-and-sound", true, wireLargeEntity | wireLargeSound},
+			} {
+				if layout.extended && profile.fte1&ftePextSoundDbl == 0 && profile.fte2&ftePext2ReplacementDeltas == 0 {
+					continue
+				}
+				for _, sample := range []byte{0, 1, 255} {
+					t.Run(fmt.Sprintf("%s/float=%v/%s/sample=%d", profile.name, floats, layout.name, sample), func(t *testing.T) {
+						q := rdTestProtocol()
+						q.extFlagsFTE1, q.extFlagsFTE2 = profile.fte1, profile.fte2
+						if floats {
+							q.extFlagsFTE1 |= ftePextFloatCoords
+						}
+						wire := []byte{byte(svc_sound)}
+						if layout.extended {
+							wire = []byte{byte(svc_fte_soundextended), layout.flags}
+						}
+						entityChannel := uint16((3 << 3) | 2)
+						if layout.flags&wireLargeEntity != 0 {
+							entityChannel = 3
+						}
+						wire = binary.LittleEndian.AppendUint16(wire, entityChannel)
+						if layout.flags&wireLargeEntity != 0 {
+							wire = append(wire, 2)
+						}
+						wire = append(wire, sample)
+						if layout.flags&wireLargeSound != 0 {
+							wire = append(wire, 0)
+						}
+						for _, c := range []float32{1, 2, 3} {
+							if floats {
+								wire = binary.LittleEndian.AppendUint32(wire, math.Float32bits(c))
+							} else {
+								wire = binary.LittleEndian.AppendUint16(wire, uint16(c*8))
+							}
+						}
+						wire = append(wire, 32, 7)
+						record := rdTestMVD(wire)
+						q.us.rb = mustByteQueue(4096, 64*1024)
+						q.us.io = &uStreamFile{}
+						q.us.curTime = 1
+						viewer := &dStream{id: 1, state: dsActive, wb: mustByteQueue(4096, 16*1024)}
+						q.us.linkedDs = map[dStreamId]*dStream{1: viewer}
+						if _, err := q.us.rb.WriteFull(record); err != nil {
+							t.Fatal(err)
+						}
+						if err := q.us.parseMVD(); err != nil {
+							t.Fatal(err)
+						}
+						if q.cdTrack != 7 || !bytes.Equal(record, queueBytes(viewer.wb)) {
+							t.Fatal("sound record changed, dropped or misaligned")
+						}
+					})
+				}
+			}
+		}
+	}
+}
