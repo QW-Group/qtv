@@ -286,7 +286,7 @@ func (qp *qProtocol) readBaseLine(delta bool) error {
 		if entNum >= maxEntities {
 			return errors.New("readBaseline: (delta) maxEntities")
 		}
-		qp.readEntityDelta(&nullEntityState, &qp.baseLine[entNum], flags, moreflags, false)
+		qp.readEntityDelta(&nullEntityState, &qp.baseLine[entNum], flags, moreflags)
 	} else {
 		entNum := qp.r.GetUint16()
 		if entNum >= maxEntities {
@@ -355,7 +355,7 @@ func (qp *qProtocol) readSpawnStatic(delta bool) error {
 
 	if delta {
 		_, flags, moreflags := qp.readEntityNum()
-		qp.readEntityDelta(&nullEntityState, &qp.spawnStatic[qp.spawnStaticCount], flags, moreflags, false)
+		qp.readEntityDelta(&nullEntityState, &qp.spawnStatic[qp.spawnStaticCount], flags, moreflags)
 	} else {
 		qp.readEntityState(&qp.spawnStatic[qp.spawnStaticCount])
 	}
@@ -434,7 +434,7 @@ func (qp *qProtocol) readEntityNum() (entNum uint, flags uint, moreflags uint) {
 	return entNum, flags, moreflags
 }
 
-func (qp *qProtocol) readEntityDelta(old *entityState, new *entityState, flags uint, moreflags uint, forcereLink bool) {
+func (qp *qProtocol) readEntityDelta(old *entityState, new *entityState, flags uint, moreflags uint) {
 	*new = *old
 
 	if (flags & uModel) != 0 {
@@ -554,7 +554,7 @@ func (qp *qProtocol) readPacketEntities(isDelta bool) error {
 			if !canExpandFrame(newindex) {
 				break
 			}
-			qp.readEntityDelta(&qp.baseLine[newnum], &newframe.ents[newindex], flags, moreflags, true)
+			qp.readEntityDelta(&qp.baseLine[newnum], &newframe.ents[newindex], flags, moreflags)
 			newframe.entNums[newindex] = uint16(newnum)
 			newindex++
 		} else if newnum == oldnum {
@@ -568,7 +568,7 @@ func (qp *qProtocol) readPacketEntities(isDelta bool) error {
 				break
 			}
 
-			qp.readEntityDelta(&oldframe.ents[oldindex], &newframe.ents[newindex], flags, moreflags, false)
+			qp.readEntityDelta(&oldframe.ents[oldindex], &newframe.ents[newindex], flags, moreflags)
 			newframe.entNums[newindex] = uint16(newnum)
 			newindex++
 			oldindex++

@@ -107,11 +107,6 @@ func (pi *playerInfo) isActive() bool {
 	return pi.userInfo.Get("name") != ""
 }
 
-// Return true if pi is spectator.
-func (pi *playerInfo) isSpectator() bool {
-	return pi.isActive() && pi.userInfo.Get("*spectator") != ""
-}
-
 // Return true if pi is player.
 func (pi *playerInfo) isPlayer() bool {
 	return pi.isActive() && pi.userInfo.Get("*spectator") == ""

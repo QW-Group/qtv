@@ -228,21 +228,9 @@ func (ds *dStream) qtvHeader() string {
 }
 
 // Send error reply to downstream (flush output buffer and close connection).
-func (ds *dStream) sendError(format string, a ...interface{}) (err error) {
-	defer func() { err = multierror.Prefix(err, "dStream.sendError:") }()
-	return ds.sendReplyEx(true, time.Now().Add(100*time.Millisecond), "ERROR: "+format, a...)
-}
-
-// Send error reply to downstream (flush output buffer and close connection).
 func (ds *dStream) sendPermanentError(format string, a ...interface{}) (err error) {
 	defer func() { err = multierror.Prefix(err, "dStream.sendPermanentError:") }()
 	return ds.sendReplyEx(true, time.Now().Add(100*time.Millisecond), "PERROR: "+format, a...)
-}
-
-// Send reply to downstream (flush output buffer and close connection).
-func (ds *dStream) sendLastReply(format string, a ...interface{}) (err error) {
-	defer func() { err = multierror.Prefix(err, "dStream.sendLastReply:") }()
-	return ds.sendReplyEx(true, time.Now().Add(5*time.Second), format, a...)
 }
 
 // Send reply to downstream (to NOT close connection).

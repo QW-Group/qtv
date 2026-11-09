@@ -49,20 +49,6 @@ func i64Bound(min, val, max int64) int64 {
 }
 
 // Bound val with min and max values.
-func uBound(min, val, max uint) uint {
-	if min >= max {
-		return min
-	}
-	if val < min {
-		return min
-	}
-	if val > max {
-		return max
-	}
-	return val
-}
-
-// Bound val with min and max values.
 func durationBound(min, val, max time.Duration) time.Duration {
 	if min >= max {
 		return min
