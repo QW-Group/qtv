@@ -362,8 +362,7 @@ const (
 	svc_fte_voicechat
 )
 
+const svc_fte_spawnstaticsound2 protocolSvc = 94
+
 // SOUNDDBL static sounds have a separate flags byte; only bit 0 widens the ID.
-const (
-	svc_fte_spawnstaticsound2 protocolSvc = 94
-	staticSoundLargeIndex                 = 1
-)
+const staticSoundLargeIndex = 1
