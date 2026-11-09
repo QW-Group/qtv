@@ -351,7 +351,7 @@ func (sv *httpSv) uploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { sv.upload.CAS(true, false) }()
 
-	if time.Now().Sub(sv.lastUpload) < 1*time.Minute {
+	if time.Since(sv.lastUpload) < 1*time.Minute {
 		w.WriteHeader(http.StatusForbidden)
 		fmt.Fprintf(w, "Only one upload allowed per minute\n")
 		return

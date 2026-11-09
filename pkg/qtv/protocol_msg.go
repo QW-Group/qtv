@@ -240,7 +240,6 @@ func (msg *netMsgW) PutUint16(v uint16) {
 	}
 	binary.LittleEndian.PutUint16(msg.b[msg.wPos:], v)
 	msg.wPos += 2
-	return
 }
 
 // Updates previously written value, does not advance write position.
@@ -250,7 +249,6 @@ func (msg *netMsgW) UpdateUint16At(v uint16, pos int) {
 		return
 	}
 	binary.LittleEndian.PutUint16(msg.b[pos:], v)
-	return
 }
 
 func (msg *netMsgW) PutUint32(v uint32) {
@@ -260,7 +258,6 @@ func (msg *netMsgW) PutUint32(v uint32) {
 	}
 	binary.LittleEndian.PutUint32(msg.b[msg.wPos:], v)
 	msg.wPos += 4
-	return
 }
 
 // Updates previously written value, does not advance write position.
@@ -270,7 +267,6 @@ func (msg *netMsgW) UpdateUint32At(v uint32, pos int) {
 		return
 	}
 	binary.LittleEndian.PutUint32(msg.b[pos:], v)
-	return
 }
 
 func (msg *netMsgW) PutFloat32(v float32) {
