@@ -116,7 +116,7 @@ func rdTestDecodeSnapshot(t *testing.T, data []byte) (*qProtocol, int) {
 			t.Fatal("short MVD set record")
 		}
 		// Parse the real recipient header, including directed player statistics.
-		done, used, _, err := q.us.parseMVDMessage(data[:size], 1, true)
+		done, used, _, err := q.us.parseMVDMessage(data[:size], 1)
 		if err != nil || done || used != size {
 			t.Fatalf("snapshot decode: err=%v done=%v used=%d want=%d", err, done, used, size)
 		}

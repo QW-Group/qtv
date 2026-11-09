@@ -218,7 +218,7 @@ func TestRDSourceFraming(t *testing.T) {
 	good := rdTestMVD(append([]byte{86}, rdTestFrame([]byte{0, 128, 1, 0, 0})...))
 	for end := 0; end < len(good); end++ {
 		q := rdTestProtocol()
-		done, discard, _, err := q.us.parseMVDMessage(good[:end], 1, true)
+		done, discard, _, err := q.us.parseMVDMessage(good[:end], 1)
 		if !done || discard != 0 || err != nil || q.rd != nil {
 			t.Fatal("partial MVD was consumed", end, err)
 		}

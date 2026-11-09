@@ -129,13 +129,8 @@ func tokenizeString(s string) (tr tokenizerResult, i int) {
 }
 
 func unquote(s string) string {
-	if strings.HasPrefix(s, "\"") {
-		s = s[1:]
-	}
-	if strings.HasSuffix(s, "\"") {
-		s = s[0 : len(s)-1]
-	}
-	return s
+	s = strings.TrimPrefix(s, "\"")
+	return strings.TrimSuffix(s, "\"")
 }
 
 // Replace old bytes with new bytes in string. Does not honor UTF-8.

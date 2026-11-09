@@ -107,11 +107,6 @@ func (pi *playerInfo) isActive() bool {
 	return pi.userInfo.Get("name") != ""
 }
 
-// Return true if pi is spectator.
-func (pi *playerInfo) isSpectator() bool {
-	return pi.isActive() && pi.userInfo.Get("*spectator") != ""
-}
-
 // Return true if pi is player.
 func (pi *playerInfo) isPlayer() bool {
 	return pi.isActive() && pi.userInfo.Get("*spectator") == ""
@@ -367,8 +362,7 @@ const (
 	svc_fte_voicechat
 )
 
+const svc_fte_spawnstaticsound2 protocolSvc = 94
+
 // SOUNDDBL static sounds have a separate flags byte; only bit 0 widens the ID.
-const (
-	svc_fte_spawnstaticsound2 protocolSvc = 94
-	staticSoundLargeIndex                 = 1
-)
+const staticSoundLargeIndex = 1

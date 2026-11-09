@@ -13,7 +13,7 @@ func TestReadListFullCatalog(t *testing.T) {
 			// Literal wire layout: cursor, NUL-terminated names, empty name, continuation.
 			wire := []byte{0}
 			for i := 1; i <= count; i++ {
-				wire = append(wire, []byte(fmt.Sprintf("s%d\x00", i))...)
+				wire = fmt.Appendf(wire, "s%d\x00", i)
 			}
 			wire = append(wire, 0, 0, 0xa5)
 			qp := &qProtocol{r: newNetMsgR(wire, false)}

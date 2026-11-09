@@ -183,16 +183,6 @@ func consistantMVD(b []byte, elapsed bool) (available int, milliseconds int64) {
 	return
 }
 
-// consistantMVDMessage retains the legacy complete-prefix inspection contract.
-func consistantMVDMessage(b []byte, elapsed bool) (bool, int, byte) {
-	cur := byteViewOf(b).cursor(0)
-	n, ms, state := inspectMVDRecord(&cur, elapsed)
-	if state != mvdRecordComplete {
-		return true, 0, 0
-	}
-	return false, n, ms
-}
-
 func (us *uStream) gameInProgress() bool {
 	status := us.qp.serverInfo.Get("status")
 	return !strings.EqualFold(status, "Standby")
@@ -283,7 +273,7 @@ func (us *uStream) parseMVD() (err error) {
 		}
 		// Hidden elapsed-time records retain their legacy 13-byte lookahead.
 		b := cur.read(max(n, min(13, cur.left)), &us.mvdScratch)
-		_, discard, packetTime, err := us.parseMVDMessage(b, demoSpeed, isLowLatency)
+		_, discard, packetTime, err := us.parseMVDMessage(b, demoSpeed)
 		if err != nil {
 			return err
 		}
@@ -314,7 +304,7 @@ func (us *uStream) tryBuffering() {
 	us.parseTime = us.curTime + 2000
 }
 
-func (us *uStream) parseMVDMessage(b []byte, demoSpeed float64, isLowLatency bool) (done bool, discard int, packetTime byte, err error) {
+func (us *uStream) parseMVDMessage(b []byte, demoSpeed float64) (done bool, discard int, packetTime byte, err error) {
 	defer func() { err = multierror.Prefix(err, "uStream.parseMVDMessage:") }()
 
 	cur := byteViewOf(b).cursor(0)
