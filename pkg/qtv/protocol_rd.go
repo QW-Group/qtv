@@ -39,7 +39,7 @@ const (
 	rdEffects2
 	rdUnused
 	rdExtend4
-	maxRDEntities = 16384
+	maxRDEntities = 32768
 )
 
 // Prediction presence bits use the original UFP layout, including old weapon frames.
@@ -260,15 +260,32 @@ type rdWorld struct {
 	time                     float32         // Time of the last accepted RD message.
 }
 
-// ensureStorage lazily allocates bounded source-owned storage.
-func (w *rdWorld) ensureStorage() {
-	if w.current == nil {
-		w.current = make([]rdEntityState, maxRDEntities)
-		w.baselines = make([]rdEntityState, maxRDEntities)
-		w.present = make([]bool, maxRDEntities)
-		w.baselinePresent = make([]bool, maxRDEntities)
-		w.baselineClassic = make([]bool, maxRDEntities)
+// ensureStorage grows all indexed source slices together after wire validation.
+func (w *rdWorld) ensureStorage(required int) error {
+	if required < 0 || required > maxRDEntities {
+		return errors.New("RD storage exceeds entity capacity")
 	}
+	if required <= len(w.current) && w.current != nil {
+		return nil
+	}
+	capacity := max(2048, len(w.current))
+	for capacity < required {
+		capacity *= 2
+	}
+	current := make([]rdEntityState, capacity)
+	baselines := make([]rdEntityState, capacity)
+	present := make([]bool, capacity)
+	baselinePresent := make([]bool, capacity)
+	baselineClassic := make([]bool, capacity)
+	copy(current, w.current)
+	copy(baselines, w.baselines)
+	copy(present, w.present)
+	copy(baselinePresent, w.baselinePresent)
+	copy(baselineClassic, w.baselineClassic)
+	w.current, w.baselines = current, baselines
+	w.present, w.baselinePresent = present, baselinePresent
+	w.baselineClassic = baselineClassic
+	return nil
 }
 
 // finiteRD rejects nonfinite protocol values before they enter retained state.
@@ -300,7 +317,9 @@ func (w *rdWorld) apply(f rdFrame) error {
 			}
 		}
 	}
-	w.ensureStorage()
+	if err := w.ensureStorage(int(last) + 1); err != nil {
+		return err
+	}
 	if f.reset {
 		clear(w.present)
 	}

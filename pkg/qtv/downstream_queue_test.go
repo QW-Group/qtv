@@ -375,6 +375,7 @@ func denseQueueTestStream() *uStream {
 	qp.gameDir = "qw"
 	qp.modelList[1] = "maps/povdmm4.bsp"
 	qp.ensureRD().apply(rdFrame{reset: true})
+	qp.rd.ensureStorage(maxRDEntities)
 	for id := 1; id < maxRDEntities; id++ {
 		s := defaultRDState()
 		s.number = uint32(id)
