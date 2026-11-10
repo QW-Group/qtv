@@ -125,12 +125,12 @@ func TestRDRejectsIncompleteUpdate(t *testing.T) {
 	}
 	old := append([]rdEntityState(nil), w.current...)
 	present := append([]bool(nil), w.present...)
-	for _, f := range []rdFrame{{time: float32(math.NaN())}, {time: 2, updates: []rdUpdate{{number: 1, remove: true}, {number: 16384}}}, {time: 2, updates: []rdUpdate{{number: 1}, {number: 1}}}, {time: 2, updates: []rdUpdate{{number: 0}}}} {
+	for _, f := range []rdFrame{{time: float32(math.NaN())}, {time: 2, updates: []rdUpdate{{number: 1, remove: true}, {number: 32768}}}, {time: 2, updates: []rdUpdate{{number: 1}, {number: 1}}}, {time: 2, updates: []rdUpdate{{number: 0}}}} {
 		if err := w.apply(f); err == nil || w.time != 1 || !reflect.DeepEqual(old, w.current) || !reflect.DeepEqual(present, w.present) {
 			t.Fatal("bad frame mutated accepted world", err)
 		}
 	}
-	for _, wire := range [][]byte{rdTestFrame([]byte{1, 0, 128, 128, 4}), rdTestFrame([]byte{0, 192, 1}), rdTestFrame([]byte{0, 128, 0, 128})} {
+	for _, wire := range [][]byte{rdTestFrame([]byte{1, 0, 128, 128, 4}), rdTestFrame([]byte{0, 192, 2}), rdTestFrame([]byte{0, 128, 0, 128})} {
 		if _, err := readRDFrame(newNetMsgR(wire, false), false); err == nil {
 			t.Fatalf("accepted invalid packet %x", wire)
 		}

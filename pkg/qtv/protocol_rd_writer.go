@@ -5,6 +5,29 @@ import (
 	"math"
 )
 
+// PutRDUpdateIndex writes one complete 14-bit RD index, including its high byte.
+func (msg *netMsgW) PutRDUpdateIndex(entity uint32, remove bool) {
+	size := 2
+	if entity > rdUpdateIndexMask {
+		size++
+	}
+	if msg.error || entity >= maxRDEntities || len(msg.b)-msg.wPos < size {
+		msg.error = true
+		return
+	}
+	word := uint16(entity & rdUpdateIndexMask)
+	if remove {
+		word |= rdUpdateRemove
+	}
+	if size == 3 {
+		word |= rdUpdateExtend
+	}
+	msg.PutUint16(word)
+	if size == 3 {
+		msg.PutByte(byte(entity >> 14))
+	}
+}
+
 // rdStateBits compares persistent fields; prediction also carries transient values.
 func rdStateBits(s, base rdEntityState) uint32 {
 	b := rdReset
@@ -441,7 +464,7 @@ func (qp *qProtocol) sendRDEnts(ds *dStream) error {
 	record := newNetMsgW(data[:], qp.w.floatCoord)
 	appendEntity := func(id int, s, base rdEntityState, predOnly bool) error {
 		record.Clear()
-		record.PutUint16(uint16(id))
+		record.PutRDUpdateIndex(uint32(id), false)
 		var err error
 		if predOnly {
 			bits := rdPredInfo

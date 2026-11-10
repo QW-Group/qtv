@@ -268,7 +268,6 @@ func (qp *qProtocol) ensureRD() *rdWorld {
 	if qp.rd == nil {
 		qp.rd = &rdWorld{}
 	}
-	qp.rd.ensureStorage()
 	return qp.rd
 }
 
@@ -327,6 +326,9 @@ func (qp *qProtocol) readRDSignon(delta, numbered bool) error {
 	}
 	w := qp.ensureRD()
 	if numbered {
+		if err := w.ensureStorage(int(s.number) + 1); err != nil {
+			return err
+		}
 		w.baselines[s.number] = s
 		w.baselinePresent[s.number] = true
 		w.baselineClassic[s.number] = !delta

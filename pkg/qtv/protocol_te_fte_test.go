@@ -76,7 +76,7 @@ func TestFTETempEntityLayouts(t *testing.T) {
 
 // TestFTETempEntityWorldLimit stays strict for retained references despite unrestricted beam keys.
 func TestFTETempEntityWorldLimit(t *testing.T) {
-	for _, ref := range [][]byte{{0, 0x40}, {0x40, 0x80, 0}, {0xff, 0xff, 0xff}} {
+	for _, ref := range [][]byte{{0x80, 0x80, 0}, {0x80, 0x80, 1}, {0xff, 0xff, 0xff}} {
 		if _, err := readRDEntityRef(newNetMsgR(ref, false)); err == nil {
 			t.Errorf("accepted out-of-range retained RD ref: %x", ref)
 		}

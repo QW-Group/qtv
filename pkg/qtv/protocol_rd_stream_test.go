@@ -129,9 +129,11 @@ func TestRDSourceClassicSignonWithEntityOnlyFloats(t *testing.T) {
 		if err := q.readMessage(b, mvdMsgRead, playersMaskAll); err != nil || q.cdTrack != 46 {
 			t.Fatal("classic signon consumed entity-only floats", opcode, err)
 		}
-		s := q.rd.baselines[1]
+		var s rdEntityState
 		if opcode == byte(svc_spawnstatic) {
 			s = q.rd.statics[0]
+		} else {
+			s = q.rd.baselines[1]
 		}
 		if s.origin != [3]float32{1, -2, 3} {
 			t.Fatal("wrong classic coordinate width", s.origin)
@@ -140,7 +142,7 @@ func TestRDSourceClassicSignonWithEntityOnlyFloats(t *testing.T) {
 }
 
 func TestRDEntityEvents(t *testing.T) {
-	for _, id := range []uint16{2047, 2048, 4095, 4096, 8191, 8192, 16383} {
+	for _, id := range []uint16{2047, 2048, 4095, 4096, 8191, 8192, 16383, 16384, 32767} {
 		for _, flags := range []uint32{0, ftePextSoundDbl, ftePextFloatCoords, ftePextSoundDbl | ftePextFloatCoords} {
 			q := rdTestProtocol()
 			q.extFlagsFTE1 = flags
@@ -179,7 +181,7 @@ func TestRDEntityEvents(t *testing.T) {
 		}
 	}
 	q := rdTestProtocol()
-	if err := q.readMessage([]byte{39, 0, 64}, mvdMsgRead, playersMaskAll); err == nil {
+	if err := q.readMessage([]byte{39, 128, 128, 0}, mvdMsgRead, playersMaskAll); err == nil {
 		t.Fatal("accepted out-of-capacity event reference")
 	}
 }
