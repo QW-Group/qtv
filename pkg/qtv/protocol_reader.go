@@ -55,6 +55,10 @@ func (qp *qProtocol) readServerData() (err error) {
 
 	qp.gameDir = qp.r.GetString()
 
+	if qp.extFlagsFTE2&ftePext2MaxPlayers != 0 {
+		qp.clientSlots = qp.r.GetByte()
+	}
+
 	qp.r.GetFloat32() // server time
 
 	qp.mapName = qp.r.GetString()
@@ -73,7 +77,7 @@ func (qp *qProtocol) readServerData() (err error) {
 
 	log.Trace().Str("ctx", "qProtocol").Str("event", "serverData").
 		Uint32("extFTE1", qp.extFlagsFTE1).Uint32("extFTE2", qp.extFlagsFTE2).Uint32("extMVD1", qp.extFlagsMVD1).
-		Str("map", qp.mapName).Uint32("svCount", qp.us.serverCount).Str("gameDir", qp.us.gameDir()).Msg("")
+		Int("slots", qp.playerSlots()).Str("map", qp.mapName).Uint32("svCount", qp.us.serverCount).Str("gameDir", qp.us.gameDir()).Msg("")
 
 	// Tell downstreams with ezQuake extensions to reconnect.
 	qp.us.forceReconnectLinkedDownstreams(false)
@@ -225,7 +229,7 @@ func (qp *qProtocol) readLastScores(s string) error {
 
 func (qp *qProtocol) readSetInfo() error {
 	pnum := qp.r.GetByte()
-	if pnum >= maxClients {
+	if int(pnum) >= qp.playerSlots() {
 		return fmt.Errorf("readSetInfo: invalid client index %v", pnum)
 	}
 	k := qp.r.GetString()
@@ -365,7 +369,7 @@ func (qp *qProtocol) readSpawnStatic(delta bool) error {
 
 func (qp *qProtocol) readPlayerInfo() error {
 	pnum := qp.r.GetByte()
-	if pnum >= maxClients {
+	if int(pnum) >= qp.playerSlots() {
 		return fmt.Errorf("readPlayerInfo: invalid client index %v", pnum)
 	}
 
@@ -581,7 +585,7 @@ func (qp *qProtocol) readPacketEntities(isDelta bool) error {
 
 func (qp *qProtocol) readUpdatePing() error {
 	pnum := qp.r.GetByte()
-	if pnum >= maxClients {
+	if int(pnum) >= qp.playerSlots() {
 		return fmt.Errorf("readUpdatePing: invalid client index %v", pnum)
 	}
 	ping := int(qp.r.GetInt16())
@@ -591,7 +595,7 @@ func (qp *qProtocol) readUpdatePing() error {
 
 func (qp *qProtocol) readUpdateFrags() error {
 	pnum := qp.r.GetByte()
-	if pnum >= maxClients {
+	if int(pnum) >= qp.playerSlots() {
 		return fmt.Errorf("readUpdateFrags: invalid client index %v", pnum)
 	}
 	frags := int(qp.r.GetInt16())
@@ -608,7 +612,7 @@ func (qp *qProtocol) readUpdateStat() error {
 		return nil
 	}
 
-	for pnum := 0; pnum < maxClients; pnum++ {
+	for pnum := 0; pnum < qwMaxClients; pnum++ {
 		if (qp.playersMask & (1 << pnum)) != 0 {
 			qp.players[pnum].stats[statnum] = value
 		}
@@ -630,7 +634,7 @@ func (qp *qProtocol) readUpdateStatLong() error {
 		qp.matchStartLocalTime = qp.us.curTime
 	}
 
-	for pnum := 0; pnum < maxClients; pnum++ {
+	for pnum := 0; pnum < qwMaxClients; pnum++ {
 		if (qp.playersMask & (1 << pnum)) != 0 {
 			qp.players[pnum].stats[statnum] = uint32(value)
 		}
@@ -640,7 +644,7 @@ func (qp *qProtocol) readUpdateStatLong() error {
 
 func (qp *qProtocol) readUpdateUserinfo() error {
 	pnum := qp.r.GetByte()
-	if pnum >= maxClients {
+	if int(pnum) >= qp.playerSlots() {
 		return fmt.Errorf("readUpdateUserinfo: invalid client index %v", pnum)
 	}
 	id := qp.r.GetUint32()
@@ -650,9 +654,18 @@ func (qp *qProtocol) readUpdateUserinfo() error {
 	return nil
 }
 
+// readWrappedPlayerNum keeps fteqtv's wrap for vanilla streams; PEXT2_MAXPLAYERS numbers are exact.
+func (qp *qProtocol) readWrappedPlayerNum() byte {
+	pnum := qp.r.GetByte()
+	if qp.extFlagsFTE2&ftePext2MaxPlayers == 0 {
+		pnum %= qwMaxClients
+	}
+	return pnum
+}
+
 func (qp *qProtocol) readPacketLoss() error {
-	pnum := qp.r.GetByte() % maxClients
-	if pnum >= maxClients {
+	pnum := qp.readWrappedPlayerNum()
+	if int(pnum) >= qp.playerSlots() {
 		return fmt.Errorf("readPacketLoss: invalid client index %v", pnum)
 	}
 	value := int(qp.r.GetByte())
@@ -661,8 +674,8 @@ func (qp *qProtocol) readPacketLoss() error {
 }
 
 func (qp *qProtocol) readUpdateEnterTime() error {
-	pnum := qp.r.GetByte() % maxClients
-	if pnum >= maxClients {
+	pnum := qp.readWrappedPlayerNum()
+	if int(pnum) >= qp.playerSlots() {
 		return fmt.Errorf("readUpdateEnterTime: invalid client index %v", pnum)
 	}
 	value := qp.r.GetFloat32()
