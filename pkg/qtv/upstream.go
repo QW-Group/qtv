@@ -1149,7 +1149,7 @@ func (us *uStream) processRead() (err error) {
 func (us *uStream) parseHeader() (err error) {
 	defer func() { err = multierror.Prefix(err, "uStream.parseHeader:") }()
 
-	view := us.rb.snapshot()
+	view := us.rb.Snapshot()
 	defer view.release()
 	cur := view.cursor(0)
 	var scratch []byte
@@ -1359,7 +1359,7 @@ func (us *uStream) ioReader(ctx context.Context) (err error) {
 	}()
 	defer func() { err = multierror.Prefix(err, "uStream.ioReader:") }()
 
-	_, err = us.rb.readFromWithContext(ctx, us.io, us.readReady)
+	_, err = us.rb.ReadFromWithPermit(ctx, us.io, us.readReady)
 	if err == nil {
 		err = io.EOF
 	}

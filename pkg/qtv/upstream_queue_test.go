@@ -272,7 +272,7 @@ func TestUpstreamQueueFilePrefetch(t *testing.T) {
 	if us.rb.Length() != localMVDReadAheadLimit {
 		t.Fatal("file prefetch budget", us.rb.Length())
 	}
-	cur := us.rb.snapshot()
+	cur := us.rb.Snapshot()
 	c := cur.cursor(0)
 	record, status := inspectMVDRecord(&c, false)
 	cur.release()

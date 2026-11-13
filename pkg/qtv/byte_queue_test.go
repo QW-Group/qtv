@@ -21,7 +21,7 @@ func mustByteQueue(limit, block int) *byteQueue {
 	return q
 }
 func queueBytes(q *byteQueue) []byte {
-	v := q.snapshot()
+	v := q.Snapshot()
 	defer v.release()
 	out := make([]byte, 0, v.size)
 	for _, p := range v.parts {
@@ -91,7 +91,7 @@ func TestByteQueueReadPermitDoesNotPaceFullBlocks(t *testing.T) {
 	data := bytes.Repeat([]byte("abcd"), 16*1024)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	n, err := q.readFromWithContext(ctx, bytes.NewReader(data), make(chan struct{}))
+	n, err := q.ReadFromWithPermit(ctx, bytes.NewReader(data), make(chan struct{}))
 	if err != nil || n != int64(len(data)) || !bytes.Equal(queueBytes(q), data) {
 		t.Fatal("full reads waited for a consumer permit", n, err)
 	}
@@ -108,7 +108,7 @@ func TestByteQueueReadPermitRetainsTerminalData(t *testing.T) {
 	for _, err := range []error{io.EOF, io.ErrClosedPipe} {
 		q := mustByteQueue(16, 8)
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		n, gotErr := q.readFromWithContext(ctx, terminalQueueReader{err}, make(chan struct{}))
+		n, gotErr := q.ReadFromWithPermit(ctx, terminalQueueReader{err}, make(chan struct{}))
 		cancel()
 		wantErr := err
 		if err == io.EOF {
@@ -248,7 +248,7 @@ func TestByteQueueOutputProgress(t *testing.T) {
 func TestByteQueueBorrowedHeadAndSnapshot(t *testing.T) {
 	q := mustByteQueue(12, 4)
 	q.WriteFull([]byte("abcdefgh"))
-	view := q.snapshot()
+	view := q.Snapshot()
 	q.WriteFull([]byte("ijkl"))
 	if string(view.parts[0]) != "abcd" || view.size != 8 {
 		t.Fatal("append invalidated view")
@@ -302,7 +302,7 @@ func TestByteQueueOutputBatchCrossesBlocks(t *testing.T) {
 	defer cancel()
 	permit := make(chan struct{}, 1)
 	done := make(chan error, 1)
-	go func() { _, e := q.writeToWithContext(ctx, a, permit); done <- e }()
+	go func() { _, e := q.WriteToWithPermit(ctx, a, permit); done <- e }()
 	b.SetReadDeadline(time.Now().Add(time.Second))
 	got := make([]byte, len(data))
 	if _, e := io.ReadFull(b, got); e != nil {

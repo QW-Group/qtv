@@ -75,7 +75,7 @@ func TestByteQueueTCPBatchAcrossBlocks(t *testing.T) {
 	defer cancel()
 	permit := make(chan struct{}, 1)
 	done := make(chan error, 1)
-	go func() { _, err := q.writeToWithContext(ctx, a, permit); done <- err }()
+	go func() { _, err := q.WriteToWithPermit(ctx, a, permit); done <- err }()
 	defer func() {
 		cancel()
 		a.Close()
