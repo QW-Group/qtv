@@ -343,6 +343,32 @@ func TestDownstreamQueueMVDRecord(t *testing.T) {
 	}
 }
 
+func TestDownstreamQueueMVDMultiRecord(t *testing.T) {
+	ds := &dStream{
+		state:    dsActive,
+		linkedUs: &uStream{mvdHdr: newNetMsgW(make([]byte, 16), false)},
+		wb:       mustByteQueue(32, 4),
+	}
+	msg := newNetMsgW(make([]byte, 2), false)
+	msg.PutByte(byte(svc_setpause))
+	msg.PutByte(1)
+	const players = uint32(1<<31 | 1)
+	if err := ds.sendMVDMessage(msg, mvdMsgMulti, players); err != nil {
+		t.Fatal(err)
+	}
+
+	wire := queueBytes(ds.wb)
+	cursor := byteViewOf(wire).cursor(0)
+	header, status := inspectMVDRecord(&cursor, false)
+	if status != mvdRecordComplete || header.size != len(wire) ||
+		header.kind != mvdMsgMulti || header.playersMask != players {
+		t.Fatalf("invalid MVD multi record % x: status=%v header=%+v", wire, status, header)
+	}
+	if got := header.quakePayload(wire, false); !bytes.Equal(got, []byte{byte(svc_setpause), 1}) {
+		t.Fatalf("MVD payload = % x, want setpause 1", got)
+	}
+}
+
 func TestDownstreamQueueDownload(t *testing.T) {
 	q := soundTestProtocol()
 	us := &uStream{qp: q, mvdHdr: newNetMsgW(make([]byte, 16), false)}

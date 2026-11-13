@@ -175,11 +175,11 @@ func (ds *dStream) sendMVDMessageEx(msg *netMsgW, msgType mvdMsgType, playersMas
 
 	mvdHdr.PutByte(msgTime)
 	mvdHdr.PutByte(byte(msgType))
-	mvdHdr.PutUint32(uint32(msg.WPos()))
 
 	if msgType == mvdMsgMulti {
 		mvdHdr.PutUint32(playersMask)
 	}
+	mvdHdr.PutUint32(uint32(msg.WPos()))
 
 	// With checkAvail we trying not to flood our output buffer with chat or user lists updates (even if we loose such info),
 	// especially useful during connection when output buffer under huge pressure.
