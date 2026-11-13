@@ -278,7 +278,7 @@ func (us *uStream) setState(state uStreamState) (err error) {
 		us.qp.reset()
 
 		us.mu.Unlock()
-		us.forceReconnectLinkedDownstreams(true) // Set safe state for all downstreams.
+		us.restartDownstreamSignon()
 		us.mu.Lock()
 
 	case usParsingHeader:
@@ -851,21 +851,16 @@ func (us *uStream) downstreamInputNotify(dsId dStreamId) {
 	us.dsInputNotifyCh <- dsId
 }
 
-// Tell downstreams to reconnect by reseting state to needInitialData_dStreamState.
-// That happens on map change so clients could download required data.
-// forceAll is used when we want to set state for ALL downstreams, that usefull when upstream disconnected.
-func (us *uStream) forceReconnectLinkedDownstreams(forceAll bool) {
+// restartDownstreamSignon marks linked downstreams as needing new signon data.
+func (us *uStream) restartDownstreamSignon() {
 	us.mu.Lock()
 	defer us.mu.Unlock()
 
 	for _, ds := range us.linkedDs {
-		// If downstream support required extension - tell to reconnect.
-		if (ds.qtvEzQuakeExt&qtvEzQuakeExtDownload) != 0 || forceAll {
-			if err := ds.setState(dsNeedInitialData); err != nil {
-				log.Trace().Err(multierror.Prefix(err, "uStream.forceReconnectLinkedDownstreams:")).
-					Str("ctx", "uStream").Uint32("id", uint32(us.id)).Uint32("dsId", uint32(ds.id)).Msg("")
-				ds.cancel() // Tell downstream to die.
-			}
+		if err := ds.setState(dsNeedInitialData); err != nil {
+			log.Trace().Err(multierror.Prefix(err, "uStream.restartDownstreamSignon:")).
+				Str("ctx", "uStream").Uint32("id", uint32(us.id)).Uint32("dsId", uint32(ds.id)).Msg("")
+			ds.cancel() // Tell downstream to die.
 		}
 	}
 }
