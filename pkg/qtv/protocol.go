@@ -68,6 +68,7 @@ type protocolReaderData struct {
 	staticSound      [maxStaticSounds]staticSound
 	staticSoundCount int
 	cdTrack          byte
+	hasCDTrack       bool
 	serverInfo       info.InfoTs
 	remoteHostName   atomic.String // Remote serverinfo hostname. (atomic since it could be used concurrently by upstream and downstream)
 	// meag:
