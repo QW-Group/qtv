@@ -81,6 +81,29 @@ func TestMVDProgressPreservesPlaybackClock(t *testing.T) {
 	}
 }
 
+func TestMVDForwardingUsesHiddenElapsedTime(t *testing.T) {
+	us, viewer := bufferingTestStream(t, 0, false)
+	us.rb = mustByteQueue(4096, 4)
+	// The legacy elapsed-time check looks past this short hidden record.
+	empty := []byte{0, 3, 0, 0, 0, 0, 0, 0, 0, 0}
+	hidden := []byte{7, 3, 0, 0, 0, 0, 3, 0, 0, 0, 10, 0, 42}
+	next := bufferingTestRecord(byte(mvdMsgAll), []byte{byte(svc_cdtrack), 9})
+	input := append(append(append([]byte{}, empty...), hidden...), next...)
+	if _, err := us.rb.WriteFull(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := us.parseMVD(); err != nil {
+		t.Fatal(err)
+	}
+	input[len(empty)] = 42
+	if got := queueBytes(viewer.wb); !bytes.Equal(got, input) {
+		t.Fatalf("forwarded records = %x", got)
+	}
+	if us.parseTime != 1042 || us.qp.cdTrack != 9 || us.rb.Length() != 0 {
+		t.Fatalf("clock=%d track=%d pending=%d", us.parseTime, us.qp.cdTrack, us.rb.Length())
+	}
+}
+
 func TestMVDNoProgressKeepsRebuffering(t *testing.T) {
 	for _, delay := range []int{7, 15} {
 		for _, partial := range [][]byte{nil, {0}, {0, 6, 2, 0, 0, 0, 32}} {

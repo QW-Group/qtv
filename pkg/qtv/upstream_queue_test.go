@@ -274,12 +274,12 @@ func TestUpstreamQueueFilePrefetch(t *testing.T) {
 	}
 	cur := us.rb.snapshot()
 	c := cur.cursor(0)
-	n, _, status := inspectMVDRecord(&c, false)
+	record, status := inspectMVDRecord(&c, false)
 	cur.release()
 	if status != mvdRecordComplete {
 		t.Fatal("prefetch framing")
 	}
-	us.rb.Discard(n)
+	us.rb.Discard(record.size)
 	deadline = time.Now().Add(time.Second)
 	for us.rb.Length() < localMVDReadAheadLimit && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
