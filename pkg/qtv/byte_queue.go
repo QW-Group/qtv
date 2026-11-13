@@ -228,9 +228,9 @@ func (q *byteQueue) appendSpansLocked(parts [][]byte, n int) [][]byte {
 	return parts
 }
 
-// snapshot borrows stable committed spans until the consumer discards or resets.
+// Snapshot borrows stable committed spans until the consumer discards or resets.
 // There must be no other snapshot/IO consumer until this view is released.
-func (q *byteQueue) snapshot() byteView {
+func (q *byteQueue) Snapshot() byteView {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.viewParts = q.appendSpansLocked(q.viewParts[:0], q.length)
@@ -257,13 +257,13 @@ func (q *byteQueue) Reset() {
 // ReadFromWithContext copies outside-lock reads into the available byte budget.
 // The owner must close the reader to interrupt a blocked Read on cancellation.
 func (q *byteQueue) ReadFromWithContext(ctx context.Context, r io.Reader) (int64, error) {
-	return q.readFromWithContext(ctx, r, nil)
+	return q.ReadFromWithPermit(ctx, r, nil)
 }
 
-// readFromWithContext optionally groups short reads on consumer ticks. Full
+// ReadFromWithPermit optionally groups short reads on consumer ticks. Full
 // reads continue immediately, so a permit never caps input at one block/tick.
 // A short read is only a scheduling hint; its bytes and errors retain normal IO semantics.
-func (q *byteQueue) readFromWithContext(ctx context.Context, r io.Reader, readPermit <-chan struct{}) (total int64, err error) {
+func (q *byteQueue) ReadFromWithPermit(ctx context.Context, r io.Reader, readPermit <-chan struct{}) (total int64, err error) {
 	q.mu.Lock()
 	if q.reading {
 		q.mu.Unlock()
@@ -315,17 +315,17 @@ func (q *byteQueue) readFromWithContext(ctx context.Context, r io.Reader, readPe
 // WriteToWithContext keeps the borrowed head queued until Write returns.
 // The owner must close the writer to interrupt a blocked Write on cancellation.
 func (q *byteQueue) WriteToWithContext(ctx context.Context, w io.Writer) (int64, error) {
-	return q.writeToWithContext(ctx, w, nil)
+	return q.WriteToWithPermit(ctx, w, nil)
 }
 
 // Limit one gathered TCP operation so slow viewers still return progress/error
 // without borrowing an entire large initial-state queue in one WriteTo call.
 const queueTCPWriteLimit = 64 * 1024
 
-// writeToWithContext optionally waits for a consumer tick between entire queued
+// WriteToWithPermit optionally waits for a consumer tick between entire queued
 // prefixes. A batch spans any number of blocks; positive writes still report
 // progress immediately, independently of the next-batch permit.
-func (q *byteQueue) writeToWithContext(ctx context.Context, w io.Writer, batchPermit <-chan struct{}) (total int64, err error) {
+func (q *byteQueue) WriteToWithPermit(ctx context.Context, w io.Writer, batchPermit <-chan struct{}) (total int64, err error) {
 	q.mu.Lock()
 	if q.writing {
 		q.mu.Unlock()

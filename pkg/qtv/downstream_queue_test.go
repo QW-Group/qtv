@@ -84,7 +84,7 @@ func TestDownstreamQueueReusesThreeBlockBursts(t *testing.T) {
 		if _, err := ds.wb.WriteFull(payload); err != nil {
 			t.Fatal(err)
 		}
-		view := ds.wb.snapshot()
+		view := ds.wb.Snapshot()
 		offset := 0
 		for _, part := range view.parts {
 			if !bytes.Equal(part, payload[offset:offset+len(part)]) {

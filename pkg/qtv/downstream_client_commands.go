@@ -110,7 +110,7 @@ func (ds *dStream) processClientInputMsg() (done bool, err error) {
 		return true, fmt.Errorf("invalid state: %v", state)
 	}
 
-	view := ds.rb.snapshot()
+	view := ds.rb.Snapshot()
 	defer view.release()
 	cur := view.cursor(0)
 	if cur.left < 2 {

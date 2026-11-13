@@ -454,7 +454,7 @@ func (ds *dStream) processRead() (err error) {
 func (ds *dStream) parseHeader() (err error) {
 	defer func() { err = multierror.Prefix(err, "dStream.parseHeader:") }()
 
-	view := ds.rb.snapshot()
+	view := ds.rb.Snapshot()
 	defer view.release()
 	cur := view.cursor(0)
 	var scratch []byte
@@ -600,7 +600,7 @@ func (ds *dStream) ioWriter(ctx context.Context) (err error) {
 		// Only unwrap writes: reads must retain cmux's sniffed input prefix.
 		writer = conn.Conn
 	}
-	_, err = ds.wb.writeToWithContext(ctx, writer, ds.writeReady)
+	_, err = ds.wb.WriteToWithPermit(ctx, writer, ds.writeReady)
 	if err == nil {
 		err = io.EOF
 	}

@@ -261,7 +261,7 @@ func (us *uStream) parseMVD() (err error) {
 		err = multierror.Prefix(err, "uStream.parseMVD:")
 	}()
 
-	view := us.rb.snapshot()
+	view := us.rb.Snapshot()
 	defer view.release()
 	cur := view.cursor(0)
 	totalDiscard := 0
