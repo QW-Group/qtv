@@ -97,30 +97,38 @@ func (q *byteQueue) tailLocked() *queueBlock {
 	return &q.blocks[len(q.blocks)-1]
 }
 
-// appendLocked copies bytes already checked against the budget.
-func (q *byteQueue) appendLocked(p []byte) {
-	q.length += len(p)
-	for len(p) > 0 {
-		tail := q.tailLocked()
-		n := copy(tail.data[tail.used:], p)
-		tail.used += n
-		p = p[n:]
+// appendLocked copies parts already checked against the budget and signals once.
+func (q *byteQueue) appendLocked(parts ...[]byte) {
+	for _, p := range parts {
+		q.length += len(p)
+		for len(p) > 0 {
+			tail := q.tailLocked()
+			n := copy(tail.data[tail.used:], p)
+			tail.used += n
+			p = p[n:]
+		}
 	}
 	notifyQueue(q.dataReady)
 }
 
 // WriteFull appends an owned record atomically, or leaves the queue unchanged.
 func (q *byteQueue) WriteFull(p []byte) (int, error) {
+	return q.WriteFullParts(p, nil)
+}
+
+// WriteFullParts appends two slices as one record without a temporary buffer.
+func (q *byteQueue) WriteFullParts(first, second []byte) (int, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.reading {
 		return 0, errByteQueueBusy
 	}
-	if len(p) > q.limit-q.length {
+	available := q.limit - q.length
+	if len(first) > available || len(second) > available-len(first) {
 		return 0, errByteQueueFull
 	}
-	q.appendLocked(p)
-	return len(p), nil
+	q.appendLocked(first, second)
+	return len(first) + len(second), nil
 }
 
 // Write implements io.Writer with an explicit error on a partial append.

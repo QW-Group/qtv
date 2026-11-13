@@ -290,6 +290,59 @@ func TestDownstreamQueueProgressAndSilentTimeout(t *testing.T) {
 		})
 	}
 }
+
+func TestDownstreamQueueMVDRecord(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		capacity     int
+		invalid      bool
+		checkAvail   int
+		wantErr      error
+		wantRejected bool
+		want         []byte
+	}{
+		{name: "payload does not fit", capacity: 9, wantErr: errByteQueueFull, wantRejected: true},
+		{name: "encoder error", capacity: 10, invalid: true, wantRejected: true},
+		{name: "reserved space", capacity: 10, checkAvail: 1, wantErr: errCheckAvail, wantRejected: true},
+		{name: "exact fit", capacity: 10, want: []byte{0, 1, 2, 0, 0, 0, 'a', 'b'}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prefix := []byte{0x11, 0x22}
+			queue := mustByteQueue(tc.capacity, 4)
+			if _, err := queue.WriteFull(prefix); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-queue.dataReady:
+			default:
+				t.Fatal("queue did not signal the existing prefix")
+			}
+			ds := &dStream{
+				state:    dsActive,
+				linkedUs: &uStream{mvdHdr: newNetMsgW(make([]byte, 16), false)},
+				wb:       queue,
+			}
+			msg := newNetMsgW(make([]byte, 2), false)
+			msg.PutByte('a')
+			msg.PutByte('b')
+			if tc.invalid {
+				msg.PutByte('c')
+			}
+
+			err := ds.sendMVDMessageEx(msg, mvdMsgRead, playersMaskAll, tc.checkAvail, 0)
+			if (err != nil) != tc.wantRejected || (tc.wantErr != nil && !errors.Is(err, tc.wantErr)) {
+				t.Fatalf("unexpected send error: %v", err)
+			}
+			if got, want := queueBytes(queue), append(prefix, tc.want...); !bytes.Equal(got, want) {
+				t.Fatalf("queued bytes = % x, want % x", got, want)
+			}
+			if notified := len(queue.dataReady) != 0; notified == tc.wantRejected {
+				t.Fatalf("queue notification = %t, want %t", notified, !tc.wantRejected)
+			}
+		})
+	}
+}
+
 func TestDownstreamQueueDownload(t *testing.T) {
 	q := soundTestProtocol()
 	us := &uStream{qp: q, mvdHdr: newNetMsgW(make([]byte, 16), false)}

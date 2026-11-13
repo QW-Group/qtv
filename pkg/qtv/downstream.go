@@ -301,26 +301,20 @@ func (ds *dStream) sendReplyWithBuilder(flushAndExit bool, deadLine time.Time, b
 }
 
 // Send byte data to downstream.
-func (ds *dStream) send(b []byte) (err error) {
+func (ds *dStream) send(b []byte) error {
+	return ds.sendParts(b, nil)
+}
+
+// sendParts queues both slices together after checking the downstream state.
+func (ds *dStream) sendParts(first, second []byte) (err error) {
 	defer func() { err = multierror.Prefix(err, "dStream.send:") }()
 
 	if ds.getState() <= dsClosing {
 		return errors.New("could not send data, stream is about to quit")
 	}
 
-	_, err = ds.wb.WriteFull(b)
+	_, err = ds.wb.WriteFullParts(first, second)
 	return err
-}
-
-// Send data to downstream wrapped inside netMsgW.
-func (ds *dStream) sendNetMsg(msg *netMsgW) (err error) {
-	defer func() { err = multierror.Prefix(err, "dStream.sendNetMsg:") }()
-
-	if msg.error {
-		return errors.New("could not send data, netMsg with error")
-	}
-
-	return ds.send(msg.Bytes())
 }
 
 // linkUpstream links downstream with upstream.

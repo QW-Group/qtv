@@ -190,10 +190,10 @@ func (ds *dStream) sendMVDMessageEx(msg *netMsgW, msgType mvdMsgType, playersMas
 		}
 	}
 
-	if err := ds.sendNetMsg(mvdHdr); err != nil {
-		return err
+	if mvdHdr.error || msg.error {
+		return errors.New("could not send data, netMsg with error")
 	}
-	return ds.sendNetMsg(msg)
+	return ds.sendParts(mvdHdr.Bytes(), msg.Bytes())
 }
 
 // Wrap data inside MVD message and write it to dStream.
