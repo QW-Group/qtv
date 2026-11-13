@@ -3,7 +3,6 @@ package qtv
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"math"
 	"strings"
 
@@ -101,17 +100,6 @@ const (
 	mvdhidden_extended uint16 = 0xFFFF
 )
 
-// mvdhidden_paused_duration(msec) embedded in dem_multiple(0) packet
-// used to tell us how much elapsed time has gone by when paused
-func isPausedTimeMessage(b []byte) (isPausedTime bool, elapsedTime byte) {
-	// expect buffer length 7 (more correct to not demand this but these packets are special case)
-	// <int: length> == 3, <short: type> == mvdhidden_paused_duration, <byte: elapsed_time> (returned)
-	if len(b) == 7 && binary.LittleEndian.Uint32(b[:4]) == 3 && binary.LittleEndian.Uint16(b[4:6]) == mvdhidden_paused_duration {
-		return true, b[6]
-	}
-	return false, 0
-}
-
 // mvdRecordStatus distinguishes a partial tail from invalid container framing.
 type mvdRecordStatus byte
 
@@ -121,64 +109,91 @@ const (
 	mvdRecordInvalid
 )
 
+// mvdRecordHeader describes a record before its timestamp is scaled for playback.
+type mvdRecordHeader struct {
+	size          int
+	payloadOffset int
+	playersMask   uint32
+	kind          mvdMsgType
+	playbackMS    byte // Timestamp used for scheduling before speed adjustment.
+}
+
+// quakePayload returns nil for container-only and negotiated hidden records.
+func (h mvdRecordHeader) quakePayload(record []byte, hidden bool) []byte {
+	if h.kind == mvdMsgSet || (hidden && h.kind == mvdMsgMulti && h.playersMask == 0) {
+		return nil
+	}
+	return record[h.payloadOffset:h.size]
+}
+
 // inspectMVDRecord validates framing without advancing or normalizing time.
-func inspectMVDRecord(c *byteCursor, elapsed bool) (int, byte, mvdRecordStatus) {
+func inspectMVDRecord(c *byteCursor, elapsed bool) (mvdRecordHeader, mvdRecordStatus) {
 	var scratch [13]byte
 	if c.left < 2 {
-		return 0, 0, mvdRecordIncomplete
+		return mvdRecordHeader{}, mvdRecordIncomplete
 	}
 	b := c.peek(2, scratch[:])
-	stamp := b[0]
-	kind := mvdMsgType(b[1]) & mvdMsgMask
-	if !isKnownMvdMsg(kind) {
-		return 0, 0, mvdRecordInvalid
+	h := mvdRecordHeader{kind: mvdMsgType(b[1]) & mvdMsgMask, playbackMS: b[0]}
+	if !isKnownMvdMsg(h.kind) {
+		return mvdRecordHeader{}, mvdRecordInvalid
 	}
-	if kind == mvdMsgSet {
+	if h.kind == mvdMsgSet {
 		if c.left < 10 {
-			return 0, 0, mvdRecordIncomplete
+			return mvdRecordHeader{}, mvdRecordIncomplete
 		}
-		return 10, stamp, mvdRecordComplete
+		h.size = 10
+		return h, mvdRecordComplete
 	}
-	offset := 2
-	if kind == mvdMsgMulti {
-		offset = 6
-		if c.left < 6 {
-			return 0, 0, mvdRecordIncomplete
-		}
-		if elapsed && binary.LittleEndian.Uint32(c.peek(6, scratch[:])[2:]) == 0 {
+	h.payloadOffset = 6
+	if h.kind == mvdMsgMulti {
+		h.payloadOffset = 10
+	}
+	if c.left < h.payloadOffset {
+		return mvdRecordHeader{}, mvdRecordIncomplete
+	}
+	b = c.peek(h.payloadOffset, scratch[:])
+	size := binary.LittleEndian.Uint32(b[h.payloadOffset-4:])
+	switch h.kind {
+	case mvdMsgMulti:
+		h.playersMask = binary.LittleEndian.Uint32(b[2:6])
+		if elapsed && h.playersMask == 0 {
+			// Hidden elapsed-time detection retains its 13-byte lookahead.
 			if c.left < 13 {
-				return 0, 0, mvdRecordIncomplete
+				return mvdRecordHeader{}, mvdRecordIncomplete
 			}
-			if paused, t := isPausedTimeMessage(c.peek(13, scratch[:])[6:13]); paused {
-				stamp = t
+			if size == 3 {
+				payload := c.peek(13, scratch[:])[10:]
+				if binary.LittleEndian.Uint16(payload[:2]) == mvdhidden_paused_duration {
+					h.playbackMS = payload[2]
+				}
 			}
 		}
+	case mvdMsgSingle, mvdMsgStats:
+		h.playersMask = uint32(1) << (b[1] >> 3)
+	default:
+		h.playersMask = playersMaskAll
 	}
-	if c.left < offset+4 {
-		return 0, 0, mvdRecordIncomplete
-	}
-	size := binary.LittleEndian.Uint32(c.peek(offset+4, scratch[:])[offset:])
 	if size > maxMvdSize {
-		return 0, 0, mvdRecordInvalid
+		return mvdRecordHeader{}, mvdRecordInvalid
 	}
-	n := int(size) + offset + 4
-	if c.left < n {
-		return n, 0, mvdRecordIncomplete
+	h.size = int(size) + h.payloadOffset
+	if c.left < h.size {
+		return h, mvdRecordIncomplete
 	}
-	return n, stamp, mvdRecordComplete
+	return h, mvdRecordComplete
 }
 
 // consistantMVD reports the complete prefix and its original container time.
 func consistantMVD(b []byte, elapsed bool) (available int, milliseconds int64) {
 	cur := byteViewOf(b).cursor(0)
 	for cur.left > 0 {
-		n, ms, state := inspectMVDRecord(&cur, elapsed)
+		header, state := inspectMVDRecord(&cur, elapsed)
 		if state != mvdRecordComplete {
 			break
 		}
-		available += n
-		milliseconds += int64(ms)
-		cur.skip(n)
+		available += header.size
+		milliseconds += int64(header.playbackMS)
+		cur.skip(header.size)
 	}
 	return
 }
@@ -254,12 +269,13 @@ func (us *uStream) parseMVD() (err error) {
 	demoSpeed, isLowLatency := us.guessPlaybackSpeed(view)
 
 	for isLowLatency || us.curTime >= us.parseTime {
-		n, rawMS, state := inspectMVDRecord(&cur, us.isTCP() && us.qp.extFlagsMVD1&mvdPext1HiddenMessages != 0)
+		hidden := us.qp.extFlagsMVD1&mvdPext1HiddenMessages != 0
+		header, state := inspectMVDRecord(&cur, us.isTCP() && hidden)
 		if state == mvdRecordInvalid {
 			return errors.New("corrupted MVD stream")
 		}
 		if state == mvdRecordIncomplete {
-			if n > us.rb.Capacity() || (totalDiscard == 0 && view.size == us.rb.Capacity()) {
+			if header.size > us.rb.Capacity() || (totalDiscard == 0 && view.size == us.rb.Capacity()) {
 				return errors.New("MVD record exceeds input queue size")
 			}
 			if us.ioError && totalDiscard == 0 {
@@ -271,19 +287,19 @@ func (us *uStream) parseMVD() (err error) {
 			}
 			break
 		}
-		// Hidden elapsed-time records retain their legacy 13-byte lookahead.
-		b := cur.read(max(n, min(13, cur.left)), &us.mvdScratch)
-		_, discard, packetTime, err := us.parseMVDMessage(b, demoSpeed)
+		b := cur.read(header.size, &us.mvdScratch)
+		payload := header.quakePayload(b, hidden)
+		packetTime, err := us.parseMVDMessage(header, payload, demoSpeed)
 		if err != nil {
 			return err
 		}
-		totalDiscard += discard
-		totalMS += int64(rawMS)
+		totalDiscard += header.size
+		totalMS += int64(header.playbackMS)
 		b[0] = packetTime
-		if err := us.sendMVDDataDown(b[:discard]); err != nil {
+		if err := us.sendMVDDataDown(b); err != nil {
 			return err
 		}
-		cur.skip(discard)
+		cur.skip(header.size)
 	}
 
 	if err = us.rb.Discard(totalDiscard); err != nil {
@@ -304,62 +320,19 @@ func (us *uStream) tryBuffering() {
 	us.parseTime = us.curTime + 2000
 }
 
-func (us *uStream) parseMVDMessage(b []byte, demoSpeed float64) (done bool, discard int, packetTime byte, err error) {
+// parseMVDMessage applies the framed payload and advances playback time on success.
+func (us *uStream) parseMVDMessage(header mvdRecordHeader, payload []byte, demoSpeed float64) (packetTime byte, err error) {
 	defer func() { err = multierror.Prefix(err, "uStream.parseMVDMessage:") }()
 
-	cur := byteViewOf(b).cursor(0)
-	size, rawMS, state := inspectMVDRecord(&cur, us.isTCP() && us.qp.extFlagsMVD1&mvdPext1HiddenMessages != 0)
-	if state == mvdRecordInvalid {
-		return true, 0, 0, errors.New("corrupted MVD stream")
-	}
-	if state == mvdRecordIncomplete {
-		return true, 0, 0, nil
-	}
-	packetTime = byte(float64(rawMS) / demoSpeed)
+	packetTime = byte(float64(header.playbackMS) / demoSpeed)
 	nextPacketTime := us.parseTime + uint64(packetTime)
-	messageType := mvdMsgType(b[1]) & mvdMsgMask
-	if messageType == mvdMsgSet {
-		us.parseTime = nextPacketTime
-		return false, size, packetTime, nil
-	}
-	lengthOfs := 2
-	if messageType == mvdMsgMulti {
-		lengthOfs = 6
-	}
-	length := size - lengthOfs - 4
-
-	// Read actual message.
-	mb := b[lengthOfs+4:]
-
-	switch messageType {
-	case mvdMsgMulti:
-		playersMask := binary.LittleEndian.Uint32(b[2 : 2+4])
-		if playersMask != 0 || (us.qp.extFlagsMVD1&mvdPext1HiddenMessages) == 0 {
-			if err := us.qp.readMessage(mb[:length], messageType, playersMask); err != nil {
-				return true, 0, 0, err
-			}
+	if payload != nil {
+		if err := us.qp.readMessage(payload, header.kind, header.playersMask); err != nil {
+			return 0, err
 		}
-	case mvdMsgSingle, mvdMsgStats:
-		playernum := (b[1] >> 3) // These are directed to a single player.
-		playersMask := uint32(1 << playernum)
-		if err := us.qp.readMessage(mb[:length], messageType, playersMask); err != nil {
-			return true, 0, 0, err
-		}
-	case mvdMsgRead, mvdMsgAll:
-		if err := us.qp.readMessage(mb[:length], messageType, playersMaskAll); err != nil {
-			return true, 0, 0, err
-		}
-	default:
-		return true, 0, 0, fmt.Errorf("unexpected messageType %v", messageType)
 	}
-
-	// Make length to be the length of the entire packet.
-	length = length + lengthOfs + 4
-
-	// We parsed packet successfully, advance parseTime.
 	us.parseTime = nextPacketTime
-	// Not done yet, discard 'length' bytes at the caller.
-	return false, length, packetTime, nil
+	return packetTime, nil
 }
 
 func (us *uStream) sendMVDDataDown(b []byte) (err error) {

@@ -116,9 +116,14 @@ func rdTestDecodeSnapshot(t *testing.T, data []byte) (*qProtocol, int) {
 			t.Fatal("short MVD set record")
 		}
 		// Parse the real recipient header, including directed player statistics.
-		done, used, _, err := q.us.parseMVDMessage(data[:size], 1)
-		if err != nil || done || used != size {
-			t.Fatalf("snapshot decode: err=%v done=%v used=%d want=%d", err, done, used, size)
+		cur := byteViewOf(data[:size]).cursor(0)
+		record, status := inspectMVDRecord(&cur, false)
+		if status != mvdRecordComplete || record.size != size {
+			t.Fatalf("snapshot framing: status=%d size=%d want=%d", status, record.size, size)
+		}
+		payload := record.quakePayload(data[:size], q.extFlagsMVD1&mvdPext1HiddenMessages != 0)
+		if _, err := q.us.parseMVDMessage(record, payload, 1); err != nil {
+			t.Fatal("snapshot decode:", err)
 		}
 		data = data[size:]
 	}

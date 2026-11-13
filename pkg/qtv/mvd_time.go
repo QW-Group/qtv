@@ -21,13 +21,13 @@ func (c *mvdTimeCache) pending(v byteView, elapsed bool) int64 {
 	}
 	cur := v.cursor(c.bytes)
 	for cur.left > 0 {
-		n, ms, state := inspectMVDRecord(&cur, elapsed)
+		header, state := inspectMVDRecord(&cur, elapsed)
 		if state != mvdRecordComplete {
 			break
 		}
-		c.bytes += n
-		c.milliseconds += int64(ms)
-		cur.skip(n)
+		c.bytes += header.size
+		c.milliseconds += int64(header.playbackMS)
+		cur.skip(header.size)
 	}
 	return c.milliseconds
 }

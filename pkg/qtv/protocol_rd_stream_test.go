@@ -220,8 +220,12 @@ func TestRDSourceFraming(t *testing.T) {
 	good := rdTestMVD(append([]byte{86}, rdTestFrame([]byte{0, 128, 1, 0, 0})...))
 	for end := 0; end < len(good); end++ {
 		q := rdTestProtocol()
-		done, discard, _, err := q.us.parseMVDMessage(good[:end], 1)
-		if !done || discard != 0 || err != nil || q.rd != nil {
+		q.us.rb = mustByteQueue(4096, 512)
+		q.us.io = &uStreamFile{}
+		if _, err := q.us.rb.WriteFull(good[:end]); err != nil {
+			t.Fatal(err)
+		}
+		if err := q.us.parseMVD(); err != nil || q.us.rb.Length() != end || q.rd != nil {
 			t.Fatal("partial MVD was consumed", end, err)
 		}
 	}

@@ -1,9 +1,45 @@
 package qtv
 
 import (
+	"bytes"
 	"math"
 	"testing"
 )
+
+func TestMVDRecordPayload(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		wire   []byte
+		hidden bool
+		kind   mvdMsgType
+		mask   uint32
+		want   []byte
+	}{
+		{"read", []byte{0, 1, 0, 0, 0, 0}, false, mvdMsgRead, playersMaskAll, []byte{}},
+		{"all", []byte{0, 6, 2, 0, 0, 0, 32, 9}, false, mvdMsgAll, playersMaskAll, []byte{32, 9}},
+		{"single", []byte{0, 4 | (31 << 3), 2, 0, 0, 0, 32, 9}, false, mvdMsgSingle, 1 << 31, []byte{32, 9}},
+		{"stats", []byte{0, 5 | (7 << 3), 2, 0, 0, 0, 32, 9}, false, mvdMsgStats, 1 << 7, []byte{32, 9}},
+		{"multi", []byte{0, 3, 3, 0, 0, 128, 2, 0, 0, 0, 32, 9}, true, mvdMsgMulti, 1<<31 | 3, []byte{32, 9}},
+		{"legacy zero mask", []byte{0, 3, 0, 0, 0, 0, 2, 0, 0, 0, 32, 9}, false, mvdMsgMulti, 0, []byte{32, 9}},
+		{"hidden zero mask", []byte{0, 3, 0, 0, 0, 0, 2, 0, 0, 0, 32, 9}, true, mvdMsgMulti, 0, nil},
+		{"set", []byte{0, 2, 1, 0, 0, 0, 2, 0, 0, 0}, false, mvdMsgSet, 0, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Deliberately split the header and include bytes of the next record.
+			input := append(bytes.Clone(tc.wire), 7, 6, 0, 0, 0, 0)
+			view := byteView{parts: [][]byte{input[:3], input[3:]}, size: len(input)}
+			cursor := view.cursor(0)
+			header, status := inspectMVDRecord(&cursor, false)
+			if status != mvdRecordComplete || header.size != len(tc.wire) || header.kind != tc.kind || header.playersMask != tc.mask {
+				t.Fatalf("header=%+v status=%v", header, status)
+			}
+			got := header.quakePayload(input, tc.hidden)
+			if (got == nil) != (tc.want == nil) || !bytes.Equal(got, tc.want) {
+				t.Fatalf("payload=%#v want=%#v", got, tc.want)
+			}
+		})
+	}
+}
 
 // A stale cached prefix or subtraction of normalized timestamps changes these sums.
 func TestMVDTimeAppendConsumeAndFlags(t *testing.T) {
@@ -67,19 +103,19 @@ func TestMVDTimeFraming(t *testing.T) {
 			mid := cut / 2
 			v := byteView{parts: [][]byte{tc.wire[:mid], tc.wire[mid:cut]}, size: cut}
 			cursor := v.cursor(0)
-			n, ms, state := inspectMVDRecord(&cursor, tc.elapsed)
+			header, state := inspectMVDRecord(&cursor, tc.elapsed)
 			if cut < len(tc.wire) {
 				if state != mvdRecordIncomplete {
 					t.Fatalf("cut%d: %d", cut, state)
 				}
-			} else if state != mvdRecordComplete || n != tc.size || ms != tc.ms {
-				t.Fatalf("%d %d %d", n, ms, state)
+			} else if state != mvdRecordComplete || header.size != tc.size || header.playbackMS != tc.ms {
+				t.Fatalf("header=%+v state=%d", header, state)
 			}
 		}
 	}
 	for _, bad := range [][]byte{{0, 7}, {0, 6, 255, 255, 255, 255}} {
 		cur := byteViewOf(bad).cursor(0)
-		_, _, state := inspectMVDRecord(&cur, false)
+		_, state := inspectMVDRecord(&cur, false)
 		if state != mvdRecordInvalid {
 			t.Fatal("bad accepted")
 		}
