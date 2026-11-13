@@ -83,6 +83,7 @@ func (qp *qProtocol) readServerData() (err error) {
 
 func (qp *qProtocol) readCDTrack() error {
 	qp.cdTrack = qp.r.GetByte()
+	qp.hasCDTrack = !qp.r.error
 	return nil
 }
 
