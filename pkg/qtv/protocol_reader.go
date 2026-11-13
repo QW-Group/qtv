@@ -75,8 +75,9 @@ func (qp *qProtocol) readServerData() (err error) {
 		Uint32("extFTE1", qp.extFlagsFTE1).Uint32("extFTE2", qp.extFlagsFTE2).Uint32("extMVD1", qp.extFlagsMVD1).
 		Str("map", qp.mapName).Uint32("svCount", qp.us.serverCount).Str("gameDir", qp.us.gameDir()).Msg("")
 
-	// Tell downstreams with ezQuake extensions to reconnect.
-	qp.us.forceReconnectLinkedDownstreams(false)
+	// Restart signon for active viewers too so they get the same generated
+	// signon as viewers joining the new map.
+	qp.us.restartDownstreamSignon()
 
 	return nil
 }

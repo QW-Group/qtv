@@ -67,7 +67,7 @@ func TestRDMapEpoch(t *testing.T) {
 		if q.rd != nil || q.extFlagsMVD1 != 0 || q.soundList[1] != "" || q.modelList[1] != "" || q.us.serverCount != oldCount+1 || q.usesRD() != (mask != 0) {
 			t.Fatal("stale map storage")
 		}
-		if download.state != dsNeedInitialData || plain.state != dsActive {
+		if download.state != dsNeedInitialData || plain.state != dsNeedInitialData {
 			t.Fatal("map viewer states")
 		}
 		// Test old map commands during the matching stage of the new signon,
@@ -102,6 +102,7 @@ func TestRDMapEpoch(t *testing.T) {
 	if err := q.ensureRD().apply(rdFrame{reset: true}); err != nil {
 		t.Fatal(err)
 	}
+	plain.state = dsActive
 	if err := q.us.setState(usInitial); err != nil || q.rd != nil || plain.state != dsNeedInitialData {
 		t.Fatal("source reconnect retained map", err)
 	}
