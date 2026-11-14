@@ -250,6 +250,22 @@ func (us *uStream) guessPlaybackSpeed(view byteView) (demoSpeed float64, isLowLa
 		demoSpeed = 1.0
 	}
 
+	// Use hysteresis to avoid toggling saturation between reads and parse passes.
+	// Mark the queue saturated at 95% and clear it at 85%.
+	capacity := us.rb.Capacity()
+	fivePercent := capacity / 20
+	if view.size >= capacity-fivePercent {
+		us.playbackQueueSaturated = true
+	} else if view.size <= capacity-3*fivePercent {
+		us.playbackQueueSaturated = false
+	}
+
+	// Keep saturated streams moving at least in real time. Slower playback
+	// lets the source's outgoing queue grow while the TCP reader waits for space.
+	if us.playbackQueueSaturated {
+		demoSpeed = max(1, demoSpeed)
+	}
+
 	return bound(0.1, demoSpeed, 3.0), false
 }
 
