@@ -71,6 +71,7 @@ type protocolReaderData struct {
 	hasCDTrack       bool
 	serverInfo       info.InfoTs
 	remoteHostName   atomic.String // Remote serverinfo hostname. (atomic since it could be used concurrently by upstream and downstream)
+	upstreamIsProxy  bool          // Upstream advertised *qtv in fullserverinfo.
 	// meag:
 	// MVDSV sends STAT_TIME directly to player, so it isn't in mvd/qtv stream,
 	// but STAT_MATCHSTARTTIME is sent (by KTX) every time the player respawns, so can pick this value up and use a local offset to guess.

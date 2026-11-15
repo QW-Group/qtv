@@ -146,7 +146,7 @@ func (qp *qProtocol) readFullServerInfo(s string) error {
 	si = unquote(si)
 	qp.serverInfo.FromStr(si)
 
-	fromProxy := (qp.serverInfo.Get("*qtv") != "")
+	qp.upstreamIsProxy = qp.serverInfo.Get("*qtv") != ""
 
 	// Replace/add our version.
 	qp.serverInfo.Setf("*qtv", "%g", qtvVersion)
@@ -161,7 +161,7 @@ func (qp *qProtocol) readFullServerInfo(s string) error {
 	// Check if we already have brackets.
 	bracket := strings.IndexByte(remoteHostName, '(')
 	// The from-proxy check is because it's fairly common to find a qw server with brackets after it's name.
-	if fromProxy && bracket != -1 && strings.HasSuffix(remoteHostName, ")") {
+	if qp.upstreamIsProxy && bracket != -1 && strings.HasSuffix(remoteHostName, ")") {
 		// Strip the parent proxy's hostname, and put our hostname first, leaving the original server's hostname within the brackets.
 		remoteHostName = fmt.Sprintf("%s %s", localHostName, remoteHostName[bracket:])
 	} else {

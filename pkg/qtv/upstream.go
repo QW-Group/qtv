@@ -366,6 +366,20 @@ type dStreamInfo struct {
 	ConnectStart uint64
 }
 
+// nowPlayingSource prefers the advertised game address because the proxy
+// may reach the source through an endpoint that viewers cannot use.
+func (us *uStream) nowPlayingSource() string {
+	endpoint, tcp := strings.CutPrefix(us.server, "tcp:")
+	source := strings.TrimPrefix(endpoint, "file:")
+	if !tcp || us.getState() != usActive || us.qp.upstreamIsProxy || us.sourceFromServerAddress() != "" {
+		return source
+	}
+	if address := strings.TrimSpace(us.qp.serverInfo.Get("hostport")); address != "" {
+		return address
+	}
+	return source
+}
+
 // Periodically collect/preprocess upstream info (including linked downstreams) and send it to upstream storage,
 // this info used for UDP and HTTP, so intensive locking and processing is not required (good) but data is delayed (bad).
 func (us *uStream) updateUStreamInfo() {
@@ -380,7 +394,7 @@ func (us *uStream) updateUStreamInfo() {
 
 	info := &uStreamInfo{
 		Id:             us.id,
-		Server:         strings.TrimPrefix(strings.TrimPrefix(us.server, "tcp:"), "file:"),
+		Server:         us.nowPlayingSource(),
 		Address:        us.address(),
 		SvInfoHostName: normalizeText(us.qp.serverInfo.Get("hostname")),
 		MapName:        us.qp.serverInfo.Get("map"),
