@@ -73,6 +73,8 @@ type uStream struct {
 	lastScoresIndex     uint                      // Next Lastscored index.
 	updateUStreamInfoAt time.Time                 // Time when we willing to update upstream info next time.
 	serverCount         uint32                    // Server count, served locally, server count from upstream ignored since it could be same number (for example for demo file).
+
+	playbackQueueSaturated bool // Remains set until the input queue has room to absorb a burst.
 }
 
 // Allocates new upstream.
@@ -267,6 +269,7 @@ func (us *uStream) setState(state uStreamState) (err error) {
 		default:
 		}
 		us.mvdTime.reset()
+		us.playbackQueueSaturated = false
 		us.mvdScratch = nil
 		us.parseTime = 0
 
@@ -285,6 +288,7 @@ func (us *uStream) setState(state uStreamState) (err error) {
 		us.hp.setState(version_uHeaderParseState)
 	case usParsingConnection:
 		us.mvdTime.reset()
+		us.playbackQueueSaturated = false
 		us.parseTime = us.curTime + (uint64)(us.expectedIngameDelay()*1000)
 		// Reset reader storage. Should be done on each map load.
 		us.qp.protocolReaderData.reset()

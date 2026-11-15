@@ -225,3 +225,54 @@ func TestMVDEOFDrainsProgressBeforeError(t *testing.T) {
 		t.Fatal("EOF without another complete record was ignored")
 	}
 }
+
+func TestMVDPlaybackSpeedUnderQueuePressure(t *testing.T) {
+	us, _ := bufferingTestStream(t, 15, true)
+	us.rb = mustByteQueue(400, 128)
+	record := bufferingTestRecord(byte(mvdMsgAll), []byte{byte(svc_cdtrack), 7, byte(svc_cdtrack), 7})
+	record[0] = 100
+	for _, tc := range []struct {
+		records int
+		want    float64
+	}{
+		{37, 3.7 / 15}, // Below the high watermark.
+		{38, 1},        // Enter at 95%.
+		{36, 1},        // Hold as the parser frees space.
+		{35, 1},
+		{34, 3.4 / 15}, // Exit at 85%.
+		{36, 3.6 / 15}, // Rising through the band does not reenter.
+	} {
+		// Successive queue contents are independent, so rebuild the time cache.
+		us.mvdTime.reset()
+		view := byteViewOf(bytes.Repeat(record, tc.records))
+		got, lowLatency := us.guessPlaybackSpeed(view)
+		if lowLatency || got < tc.want-0.0001 || got > tc.want+0.0001 {
+			t.Fatalf("queue bytes %d: speed = %v, low latency = %v, want %v", view.size, got, lowLatency, tc.want)
+		}
+	}
+
+	// The floor must still permit catch-up when the queue holds enough MVD time.
+	us.qtv.qvs.Set("parse_delay", "7")
+	us.mvdTime.reset()
+	record[0] = 250
+	view := byteViewOf(bytes.Repeat(record, 38))
+	if got, _ := us.guessPlaybackSpeed(view); got < 1.35 || got > 1.36 {
+		t.Fatalf("speed at 95%% with 9.5 seconds queued = %v, want 9.5/7", got)
+	}
+}
+
+func TestMVDPressurePreservesInitialPlaybackClock(t *testing.T) {
+	us, viewer := bufferingTestStream(t, 15, true)
+	us.state = usParsingConnection
+	us.parseTime = us.curTime + 15000
+	record := bufferingTestRecord(6, []byte{32, 7})
+	if _, err := us.rb.WriteFull(bytes.Repeat(record, us.rb.Capacity()/len(record))); err != nil {
+		t.Fatal(err)
+	}
+	if err := us.parseMVD(); err != nil {
+		t.Fatal(err)
+	}
+	if us.parseTime != 16000 || us.rb.Length() != us.rb.Capacity() || viewer.wb.Length() != 0 {
+		t.Fatal("parsed before the initial playback deadline")
+	}
+}
