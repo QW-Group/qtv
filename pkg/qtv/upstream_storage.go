@@ -385,6 +385,11 @@ func (options *uStreamOptions) parseOptions(cmdArgs *qCmdArgs) {
 			options.address = optional.NewString(addr)
 			fmt.Printf("... using custom address (%v)\n", addr)
 			i++
+		case "public_source":
+			if addr := cmdArgs.Argv(i + 1); addr != "" {
+				options.publicSource = optional.NewString(addr)
+			}
+			i++
 		default:
 			fmt.Printf("... unknown option %v\n", argv)
 		}
@@ -402,6 +407,7 @@ func qtvCmd(qtv *QTV, cmdArgs *qCmdArgs) (err error) {
 		fmt.Printf("  password <password>      // password for connecting clients\n")
 		fmt.Printf("  delay <delay>            // in seconds (defaults to 'parse_delay')\n")
 		fmt.Printf("  address <address>        // address mvdsv will broadcast to server-browsers\n")
+		fmt.Printf("  public_source <host:port> // game server address shown in the web listing\n")
 		fmt.Printf("\n")
 		fmt.Printf("Chaining usage is similar:\n")
 		fmt.Printf("%s <[streamId@]host3:port3@host2:port2@host1:port1>\n", name)

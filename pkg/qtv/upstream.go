@@ -167,11 +167,12 @@ func (us *uStream) run() {
 
 // Custom per-stream options
 type uStreamOptions struct {
-	isUser      bool             // User created UpStream, implies it should be closed when no viewers and also we should reuse UpStream if other user trying to create it.
-	usPassword  optional.String  // UpStream password, this upstream use that password when connecting to remote server.
-	dsPassword  optional.String  // DownStream password, clients should provide it in order to connect to this upstream.
-	ingameDelay optional.Float64 // Stream may overwrite 'parse_delay' setting.
-	address     optional.String  // Upstream (mvdsv) will use this setting to broadcast it to server-browsers.
+	isUser       bool             // User created UpStream, implies it should be closed when no viewers and also we should reuse UpStream if other user trying to create it.
+	usPassword   optional.String  // UpStream password, this upstream use that password when connecting to remote server.
+	dsPassword   optional.String  // DownStream password, clients should provide it in order to connect to this upstream.
+	ingameDelay  optional.Float64 // Stream may overwrite 'parse_delay' setting.
+	address      optional.String  // Upstream (mvdsv) will use this setting to broadcast it to server-browsers.
+	publicSource optional.String  // Game server address shown in the web listing.
 }
 
 const (
@@ -376,7 +377,7 @@ func (us *uStream) updateUStreamInfo() {
 
 	info := &uStreamInfo{
 		Id:             us.id,
-		Server:         strings.TrimPrefix(strings.TrimPrefix(us.server, "tcp:"), "file:"),
+		Server:         us.options.publicSource.OrElse(strings.TrimPrefix(strings.TrimPrefix(us.server, "tcp:"), "file:")),
 		Address:        us.address(),
 		SvInfoHostName: normalizeText(us.qp.serverInfo.Get("hostname")),
 		MapName:        us.qp.serverInfo.Get("map"),
