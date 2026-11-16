@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sort"
 	"sync"
@@ -24,6 +25,8 @@ type dStreamStorage struct {
 	closing bool
 	// Map of downstream objects.
 	stream map[dStreamId]*dStream
+	// Count pending handshakes against maxclients before they become viewers or sources.
+	pending int
 	// Downstream id pool.
 	ids *pools.IDPool
 	// This channel used for communication with dStream.
@@ -65,10 +68,8 @@ func (dss *dStreamStorage) serve(l net.Listener) (err error) {
 	defer doneTimeout.Stop()
 
 	for {
-		if done == nil {
-			if dss.count() == 0 {
-				return nil // All downstreams closed.
-			}
+		if done == nil && dss.count() == 0 {
+			return nil // accept joins any remaining classifiers.
 		}
 		select {
 		case <-doneTimeout.C:
@@ -92,6 +93,8 @@ func (dss *dStreamStorage) serve(l net.Listener) (err error) {
 }
 
 func (dss *dStreamStorage) accept(ctx context.Context, l net.Listener) error {
+	var classifiers sync.WaitGroup
+	defer classifiers.Wait()
 	for {
 		select {
 		case <-ctx.Done():
@@ -103,10 +106,17 @@ func (dss *dStreamStorage) accept(ctx context.Context, l net.Listener) error {
 		if err != nil {
 			return err
 		}
-		// go dss.open(conn)
-		if err := dss.open(conn); err != nil {
-			log.Err(multierror.Prefix(err, "dStreamStorage.accept:")).Msg("")
+		dss.mu.Lock()
+		if dss.atCapacity() {
+			dss.mu.Unlock()
+			conn.Close()
+			continue
 		}
+		dss.pending++
+		dss.mu.Unlock()
+		acceptedAt, writer := admitQTVTCP(conn)
+		deadline := acceptedAt.Add(reverseHandshakeTimeout)
+		classifiers.Go(func() { dss.classifyTCP(ctx, conn, writer, deadline) })
 	}
 }
 
@@ -119,14 +129,28 @@ func (dss *dStreamStorage) open(conn net.Conn) (err error) {
 	dss.mu.Lock()
 	defer dss.mu.Unlock()
 
-	// If we reached maximum clients (or about to quit) then silently close incoming connection.
-	if len(dss.stream) >= dss.maxClients() || dss.closing {
+	if dss.atCapacity() {
 		conn.Close()
 		return nil
 	}
+	return dss.openLocked(conn, conn)
+}
 
+func (dss *dStreamStorage) atCapacity() bool {
+	return len(dss.stream)+dss.pending >= dss.maxClients() || dss.closing
+}
+
+func (dss *dStreamStorage) finishPending() {
+	dss.mu.Lock()
+	dss.pending--
+	dss.mu.Unlock()
+}
+
+// openLocked requires dss.mu so the classifier can replace a pending slot
+// with a viewer without letting another connection claim the slot.
+func (dss *dStreamStorage) openLocked(conn net.Conn, writer io.Writer) error {
 	dsId := dStreamId(dss.ids.Get())
-	ds, err := newDStream(dss.qtv, dss.notifyCh, conn, dsId)
+	ds, err := newDStream(dss.qtv, dss.notifyCh, conn, writer, dsId)
 	if err != nil {
 		conn.Close()
 		dss.ids.Put(uint32(dsId)) // Return id back to the pool.
@@ -198,6 +222,7 @@ func (dss *dStreamStorage) list() (list []*dStreamListInfo) {
 
 func (dss *dStreamStorage) regVars(qtv *QTV) {
 	qtv.qvs.Reg("qtv_password", "")
+	qtv.qvs.RegEx("qtv_reverse_secret", "", qVarFlagSecret, nil)
 	qtv.qvs.RegEx("maxclients", "1000", qVarFlagServerInfo, nil)
 	qtv.qvs.Reg("allow_download", "1")
 	qtv.qvs.Reg("allow_download_skins", "1")

@@ -2,73 +2,53 @@ package qtv
 
 import (
 	"bytes"
-	"context"
+	"fmt"
 	"io"
 	"net"
+	"strings"
 	"testing"
-	"time"
 
-	"github.com/soheilhy/cmux"
+	"golang.org/x/crypto/sha3"
 )
 
-// Native writes must not replace the cmux reader, which owns the sniffed prefix.
-func TestDownstreamTCPWriterPreservesMuxInput(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+func TestDownstreamTCPWriterPreservesBufferedInput(t *testing.T) {
+	q, dial := serveReverseTestQTV(t)
+	const password = "viewer password"
+	q.qvs.Set("qtv_password", password)
+	q.setDemoList(nil)
+	client, reader := dial()
+	extension := fmt.Sprintf("%s: %d\n", qtvEzQuakeExt, qtvEzQuakeExtDownload)
+	// The extension starts with the bytes sniffed by cmux. The second header
+	// selects a different command so losing classifier read-ahead is observable.
+	reverseTestWrite(t, client, extension+"QTV\nVERSION: 1\nDEMOLIST\nAUTH: SHA3_512\n\nSOURCELIST\n")
+	header := reverseTestReadHeader(t, reader)
+	challenge, ok := strings.CutPrefix(header, "QTVSV 1\n"+extension+"AUTH: SHA3_512\nCHALLENGE: ")
+	if !ok {
+		t.Fatalf("viewer challenge was lost: %q", header)
 	}
-	mux := cmux.New(listener)
-	qtvListener := mux.Match(cmux.PrefixMatcher("QTV"))
-	serveDone := make(chan error, 1)
-	go func() { serveDone <- mux.Serve() }()
-	defer func() {
-		mux.Close()
-		listener.Close()
-		select {
-		case <-serveDone:
-		case <-time.After(time.Second):
-			t.Error("mux did not stop")
-		}
-	}()
-	client, err := net.Dial("tcp", listener.Addr().String())
-	if err != nil {
-		t.Fatal(err)
+
+	q.dss.mu.Lock()
+	ds := q.dss.stream[1]
+	q.dss.mu.Unlock()
+	if ds == nil {
+		t.Fatal("TCP viewer was not registered")
 	}
-	defer client.Close()
-	client.SetDeadline(time.Now().Add(3 * time.Second))
-	header := []byte("QTV\nVERSION: 1\n\n")
-	if _, err := client.Write(header); err != nil {
-		t.Fatal(err)
+	// The queue gathers multiple blocks only for a native TCP writer.
+	if _, ok := ds.writer.(*net.TCPConn); !ok {
+		t.Fatalf("viewer writer is %T, want *net.TCPConn", ds.writer)
 	}
-	accepted, err := qtvListener.Accept()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer accepted.Close()
-	accepted.SetDeadline(time.Now().Add(3 * time.Second))
-	ds := &dStream{conn: accepted, wb: mustByteQueue(192*1024, 16*1024), ioECh: make(chan error, 2), writeReady: make(chan struct{}, 1)}
 	data := tcpQueuePayload(144000)
-	ds.wb.WriteFull(append([]byte("skip!"), data...))
-	ds.wb.Discard(5)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- ds.ioWriter(ctx) }()
-	defer func() {
-		cancel()
-		accepted.Close()
-		select {
-		case <-done:
-		case <-time.After(time.Second):
-			t.Error("downstream writer did not stop")
-		}
-	}()
-	gotHeader := make([]byte, len(header))
-	if _, err := io.ReadFull(ds.conn, gotHeader); err != nil || !bytes.Equal(gotHeader, header) {
-		t.Fatal("mux sniffed input was lost", err)
+	if _, err := ds.wb.WriteFull(data); err != nil {
+		t.Fatal(err)
 	}
 	got := make([]byte, len(data))
-	if _, err := io.ReadFull(client, got); err != nil || !bytes.Equal(got, data) {
-		t.Fatal("mux output was corrupted", err)
+	if _, err := io.ReadFull(reader, got); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("multi-block TCP output was corrupted: %v", err)
+	}
+
+	response := sha3.Sum512([]byte(strings.TrimSuffix(challenge, "\n\n") + password))
+	reverseTestWrite(t, client, fmt.Sprintf("PASSWORD: %x\n\n", response))
+	if got := reverseTestReadHeader(t, reader); !strings.Contains(got, "PERROR: no sources currently available\n") {
+		t.Fatalf("buffered viewer authentication did not complete: %q", got)
 	}
 }

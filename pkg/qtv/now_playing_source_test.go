@@ -1,12 +1,17 @@
 package qtv
 
-import "testing"
+import (
+	"bufio"
+	"strings"
+	"testing"
+)
 
 func TestNowPlayingSource(t *testing.T) {
 	const (
 		publicAddress = "br.quake.world:27501"
 		gameSource    = "192.168.1.2:28501"
 		proxySource   = "127.0.0.1:28000"
+		reverseSource = "Reverse stream 1"
 		watchAddress  = "qtv.example.net:28000"
 	)
 	for _, tc := range []struct {
@@ -14,6 +19,7 @@ func TestNowPlayingSource(t *testing.T) {
 		source   string
 		hostport string
 		proxy    bool
+		reverse  bool
 		inactive bool
 		want     string
 	}{
@@ -26,12 +32,19 @@ func TestNowPlayingSource(t *testing.T) {
 		{name: "chained", source: "tcp:1@" + proxySource, hostport: publicAddress, want: "1@" + proxySource},
 		{name: "remote recording", source: "tcp:file:match.mvd@" + proxySource, hostport: publicAddress, want: "match.mvd@" + proxySource},
 		{name: "recording", source: "file:match.mvd", hostport: publicAddress, want: "match.mvd"},
+		{name: "reverse", source: reverseSource, hostport: publicAddress, reverse: true, want: publicAddress},
+		{name: "reverse keeps hostport verbatim", source: reverseSource, hostport: " " + publicAddress, reverse: true, want: " " + publicAddress},
+		{name: "reverse without hostport", source: reverseSource, reverse: true, want: reverseSource},
+		{name: "reverse during signon", source: reverseSource, hostport: publicAddress, reverse: true, inactive: true, want: publicAddress},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			us, _ := bufferingTestStream(t, 0, false)
 			us.qtv.qvs.Reg("address", watchAddress)
 			us.qtv.qvs.Reg("qtv_password", "")
 			us.server = tc.source
+			if tc.reverse {
+				us.io.(*uStreamTCP).reverseReader = bufio.NewReader(strings.NewReader(""))
+			}
 			if tc.inactive {
 				us.state = usParsingConnection
 			}
@@ -47,6 +60,9 @@ func TestNowPlayingSource(t *testing.T) {
 			}
 			if err := us.qp.readFullServerInfo("fullserverinfo " + serverInfo); err != nil {
 				t.Fatal(err)
+			}
+			if got := us.nowPlayingSource(); got != tc.want {
+				t.Fatalf("source = %q, want %q", got, tc.want)
 			}
 			us.updateUStreamInfo()
 			got := (<-updates).(*uStreamInfo)

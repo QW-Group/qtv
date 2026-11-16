@@ -90,6 +90,10 @@ func newUStream(qtv *QTV, ussNotifyCh chan<- interface{}, server string, ussName
 		return nil, err
 	}
 
+	return newUStreamWithIO(qtv, ussNotifyCh, server, ussName, usId, options, usIO)
+}
+
+func newUStreamWithIO(qtv *QTV, ussNotifyCh chan<- interface{}, server, ussName string, usId uStreamId, options uStreamOptions, usIO uStreamIO) (*uStream, error) {
 	readLimit := qtv.qvs.Get("ustream_read_buf_size").Int
 	if _, file := usIO.(*uStreamFile); file {
 		readLimit = min(readLimit, localMVDReadAheadLimit)
@@ -106,7 +110,7 @@ func newUStream(qtv *QTV, ussNotifyCh chan<- interface{}, server string, ussName
 
 	ctx, cancel := context.WithCancel(qtv.ctx)
 
-	us = &uStream{
+	us := &uStream{
 		qtv:             qtv,
 		id:              usId,
 		server:          server,
@@ -371,6 +375,12 @@ type dStreamInfo struct {
 func (us *uStream) nowPlayingSource() string {
 	endpoint, tcp := strings.CutPrefix(us.server, "tcp:")
 	source := strings.TrimPrefix(endpoint, "file:")
+	if us.isReverse() {
+		if address := us.qp.serverInfo.Get("hostport"); address != "" {
+			return address
+		}
+		return source
+	}
 	if !tcp || us.getState() != usActive || us.qp.upstreamIsProxy || us.sourceFromServerAddress() != "" {
 		return source
 	}
@@ -1013,6 +1023,10 @@ outer:
 		if err != nil && ctx.Err() == nil {
 			log.Err(multierror.Prefix(err, "uStream.mainLoop:")).Str("ctx", "uStream").Str("event", "disconnect").Uint32("id", uint32(us.id)).Msg("")
 		}
+		if us.isReverse() {
+			// The game server owns retries for incoming reverse connections.
+			return err
+		}
 		us.updateReconnectDelay(false)
 		reconnectTimer.Reset(us.reconnectDelay)
 		for {
@@ -1077,8 +1091,8 @@ func (us *uStream) mainLoopIteration(ctx context.Context) (err error) {
 	g.Go(func() error { return us.ioReader(ctx) })
 	g.Go(func() error { return us.ioWriter(ctx) })
 
-	if us.isDemo() {
-		// In the case of the demo we start parsing connection right away.
+	if us.isDemo() || us.isReverse() {
+		// Files start with MVD. Reverse TCP has validated BEGIN in Open.
 		if err := us.setState(usParsingConnection); err != nil {
 			return err
 		}
@@ -1363,6 +1377,11 @@ func (us *uStream) isDemo() bool {
 func (us *uStream) isTCP() bool {
 	_, ok := us.io.(*uStreamTCP)
 	return ok
+}
+
+func (us *uStream) isReverse() bool {
+	tcp, ok := us.io.(*uStreamTCP)
+	return ok && tcp.reverseReader != nil
 }
 
 // Reader goroutine. Perform reading from abstract IO object to our read buffer.

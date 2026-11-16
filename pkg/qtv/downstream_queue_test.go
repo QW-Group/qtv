@@ -56,7 +56,7 @@ func TestDownstreamQueueReusesThreeBlockBursts(t *testing.T) {
 	a, b := net.Pipe()
 	defer b.Close()
 	notify := make(chan dStreamId, 1)
-	ds, err := newDStream(q, notify, a, 1)
+	ds, err := newDStream(q, notify, a, a, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestDownstreamQueueReplyFlush(t *testing.T) {
 	defer b.Close()
 	b.SetDeadline(time.Now().Add(3 * time.Second))
 	notify := make(chan dStreamId, 1)
-	ds, e := newDStream(q, notify, a, 1)
+	ds, e := newDStream(q, notify, a, a, 1)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -251,7 +251,7 @@ func TestDownstreamQueueProgressAndSilentTimeout(t *testing.T) {
 				}
 			}()
 			us := &uStream{dsCloseNotifyCh: make(chan dStreamId, 1)}
-			ds := &dStream{qtv: q, conn: conn, rb: mustByteQueue(32768, 4096), wb: mustByteQueue(196608, 16384), linkedUs: us, ioECh: make(chan error, 2), dssNotifyCh: make(chan dStreamId, 1)}
+			ds := &dStream{qtv: q, conn: conn, writer: conn, rb: mustByteQueue(32768, 4096), wb: mustByteQueue(196608, 16384), linkedUs: us, ioECh: make(chan error, 2), dssNotifyCh: make(chan dStreamId, 1)}
 			done := make(chan error, 1)
 			go func() { done <- ds.mainLoop(ctx) }()
 			<-conn.ready
