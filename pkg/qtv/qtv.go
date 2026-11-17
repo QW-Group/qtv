@@ -290,7 +290,7 @@ var (
 
 func fileNameHasSensitiveExtension(name string) bool {
 	ext := filepath.Ext(name)
-	return sensitiveDataExtensions[ext]
+	return sensitiveDataExtensions[strings.ToLower(ext)]
 }
 
 func demoNameHasValidExtension(name string) bool {
