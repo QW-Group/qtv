@@ -258,6 +258,42 @@ func TestReverseConnectRejectsInvalidHandshake(t *testing.T) {
 	}
 }
 
+func TestReverseReconnectWithFullViewerLimit(t *testing.T) {
+	q, dial := serveReverseTestQTV(t)
+	q.qvs.Set("maxclients", "1")
+	q.qvs.Set("maxservers", "2")
+	connectSource := func() net.Conn {
+		c, r := dial()
+		proof := reverseTestHMAC(t, reverseTestChallenge(t, c, r))
+		reverseTestWrite(t, c, reverseTestProof(proof)+testReverseBegin)
+		if got := reverseTestReadHeader(t, r); !strings.Contains(got, "\nREVERSED\n") {
+			t.Fatalf("source was not registered: %q", got)
+		}
+		return c
+	}
+	connectSource()
+	reconnecting := connectSource()
+	viewer, viewerReader := dial()
+	reverseTestWrite(t, viewer, "QTV\nVERSION: 1\nSOURCE: 1\n\n")
+	if got := reverseTestReadHeader(t, viewerReader); !strings.Contains(got, "\nBEGIN: ") {
+		t.Fatalf("viewer was not admitted: %q", got)
+	}
+	reverseTestWaitCount(t, q.dss.count, 1)
+
+	reconnecting.Close()
+	reverseTestWaitCount(t, q.uss.count, 1)
+	connectSource()
+	reverseTestWaitCount(t, q.uss.count, 2)
+
+	extra, extraReader := dial()
+	reverseTestWrite(t, extra, "QTV\nVERSION: 1\nSOURCE: 1\n\n")
+	got, err := io.ReadAll(extraReader)
+	if len(got) != 0 || (err != nil && !errors.Is(err, syscall.ECONNRESET)) {
+		t.Fatalf("extra viewer was not closed without a reply: %q, %v", got, err)
+	}
+	reverseTestWaitCount(t, q.dss.count, 1)
+}
+
 func TestReverseConnectSharesHeaderBudgetAcrossChallenge(t *testing.T) {
 	q, dial := serveReverseTestQTV(t)
 	c, r := dial()
@@ -404,19 +440,48 @@ func reverseTestWaitPending(t *testing.T, dss *dStreamStorage, want int) {
 	}, want)
 }
 
-func TestReverseConnectBoundsPendingClientsAndHandshakeTime(t *testing.T) {
+func TestReverseConnectBoundsPendingHandshakes(t *testing.T) {
 	q, dial := serveReverseTestQTV(t)
 	q.qvs.Set("maxclients", "1")
+	connections := make([]net.Conn, maxPendingQTVHandshakes)
+	for i := range connections {
+		c, _ := dial()
+		reverseTestWrite(t, c, "QTV\nVERSION: 1\n")
+		connections[i] = c
+	}
+	reverseTestWaitPending(t, q.dss, maxPendingQTVHandshakes)
+	if got := q.dss.count(); got != 0 {
+		t.Fatalf("pending handshakes counted as %d viewers", got)
+	}
+
+	extra, extraReader := dial()
+	reverseTestWrite(t, extra, testReverseHello)
+	reverseTestRejected(t, extraReader)
+
+	connections[0].Close()
+	reverseTestWaitPending(t, q.dss, maxPendingQTVHandshakes-1)
+
+	q.qvs.Set("qtv_password", "viewer only")
+	viewer, viewerReader := dial()
+	reverseTestWrite(t, viewer, "QTV\nVERSION: 1\nSOURCELIST\nAUTH: SHA3_512\n\n")
+	if got := reverseTestReadHeader(t, viewerReader); !strings.Contains(got, "\nCHALLENGE: ") {
+		t.Fatalf("pending handshakes blocked a free viewer slot: %q", got)
+	}
+	reverseTestWaitCount(t, q.dss.count, 1)
+	viewer.Close()
+	reverseTestWaitCount(t, q.dss.count, 0)
+
+	replacement, replacementReader := dial()
+	reverseTestChallenge(t, replacement, replacementReader)
+	reverseTestWaitPending(t, q.dss, maxPendingQTVHandshakes)
+}
+
+func TestReverseConnectBoundsHandshakeTime(t *testing.T) {
+	q, dial := serveReverseTestQTV(t)
 	c, r := dial()
 	start := time.Now()
 	reverseTestWrite(t, c, "QTV\nVERSION: 1\n")
 	reverseTestWaitPending(t, q.dss, 1)
-	if got := q.dss.count(); got != 0 {
-		t.Fatalf("pending handshake counted as %d downstreams", got)
-	}
-	extra, extraReader := dial()
-	reverseTestWrite(t, extra, testReverseHello)
-	reverseTestRejected(t, extraReader)
 	// Spend more than half of the full deadline before even identifying the
 	// reverse request. A fresh deadline at the challenge would miss this cap.
 	time.Sleep(3 * time.Second)
@@ -511,6 +576,7 @@ func TestReverseConnectRegistersIDBeforeSendingReply(t *testing.T) {
 	if got := reverseTestReadHeader(t, r); !strings.Contains(got, "\\streamid\\1") {
 		t.Fatalf("source received no stream ID: %q", got)
 	}
+	reverseTestWaitPending(t, q.dss, 0)
 	viewer, viewerReader := dial()
 	reverseTestWrite(t, viewer, "QTV\nVERSION: 1\nSOURCE: 1\n\n")
 	if got := reverseTestReadHeader(t, viewerReader); !strings.Contains(got, "\nBEGIN: ") {

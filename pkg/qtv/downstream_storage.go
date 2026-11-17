@@ -19,13 +19,17 @@ import (
 // Accept incoming downstream connections, keep track of all downstreams, assign ids.
 //
 
+// Bound the sockets waiting for a QTV header or reverse authentication even
+// when the viewer limit is full.
+const maxPendingQTVHandshakes = 128
+
 type dStreamStorage struct {
 	mu sync.Mutex
 	// True when we about to quit.
 	closing bool
 	// Map of downstream objects.
 	stream map[dStreamId]*dStream
-	// Count pending handshakes against maxclients before they become viewers or sources.
+	// Count TCP handshakes until they are rejected or handed off.
 	pending int
 	// Downstream id pool.
 	ids *pools.IDPool
@@ -107,7 +111,7 @@ func (dss *dStreamStorage) accept(ctx context.Context, l net.Listener) error {
 			return err
 		}
 		dss.mu.Lock()
-		if dss.atCapacity() {
+		if dss.closing || dss.pending >= maxPendingQTVHandshakes {
 			dss.mu.Unlock()
 			conn.Close()
 			continue
@@ -129,15 +133,15 @@ func (dss *dStreamStorage) open(conn net.Conn) (err error) {
 	dss.mu.Lock()
 	defer dss.mu.Unlock()
 
-	if dss.atCapacity() {
+	if dss.viewerAtCapacity() {
 		conn.Close()
 		return nil
 	}
 	return dss.openLocked(conn, conn)
 }
 
-func (dss *dStreamStorage) atCapacity() bool {
-	return len(dss.stream)+dss.pending >= dss.maxClients() || dss.closing
+func (dss *dStreamStorage) viewerAtCapacity() bool {
+	return len(dss.stream) >= dss.maxClients() || dss.closing
 }
 
 func (dss *dStreamStorage) finishPending() {
@@ -146,8 +150,8 @@ func (dss *dStreamStorage) finishPending() {
 	dss.mu.Unlock()
 }
 
-// openLocked requires dss.mu so the classifier can replace a pending slot
-// with a viewer without letting another connection claim the slot.
+// openLocked requires dss.mu so checking the viewer limit and registering
+// the viewer happen under the same lock.
 func (dss *dStreamStorage) openLocked(conn net.Conn, writer io.Writer) error {
 	dsId := dStreamId(dss.ids.Get())
 	ds, err := newDStream(dss.qtv, dss.notifyCh, conn, writer, dsId)

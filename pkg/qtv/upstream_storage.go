@@ -233,8 +233,7 @@ func (uss *uStreamStorage) open(server string, lock bool, options uStreamOptions
 }
 
 // registerReverse publishes the source ID before REVERSED can expose it to a
-// viewer. The caller releases the pending client slot before starting the
-// upstream so that viewer can connect immediately.
+// viewer.
 func (uss *uStreamStorage) registerReverse(conn net.Conn, reader *bufio.Reader, ui *info.Info) (*uStream, error) {
 	uss.mu.Lock()
 	defer uss.mu.Unlock()

@@ -12,8 +12,8 @@ import (
 
 // tcpIngressListener bounds sockets waiting for cmux to distinguish QTV from
 // HTTP. It reserves a slot before accepting so cmux cannot start an unbounded
-// number of classifier goroutines. QTV counts admitted connections separately
-// against maxclients.
+// number of classifier goroutines. QTV applies its handshake limit after cmux
+// identifies the protocol.
 type tcpIngressListener struct {
 	net.Listener
 	ctx   context.Context
@@ -70,9 +70,9 @@ func newTCPMux(ctx context.Context, listener net.Listener, allowHTTP bool, class
 	return mux, qtvListener, httpListener
 }
 
-// admitQTVTCP releases the classification slot after QTV has counted the
-// connection against maxclients. Return the native socket for batched viewer
-// writes while the caller keeps the wrapper chain for reads and close.
+// admitQTVTCP releases the classification slot after QTV has reserved a
+// handshake slot. It returns the native socket for batched viewer writes
+// while the caller keeps the wrapper chain for reads and close.
 func admitQTVTCP(conn net.Conn) (time.Time, io.Writer) {
 	acceptedAt := time.Now()
 	if muxed, ok := conn.(*cmux.MuxConn); ok {

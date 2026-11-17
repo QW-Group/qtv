@@ -141,7 +141,6 @@ func (dss *dStreamStorage) classifyTCP(ctx context.Context, conn net.Conn, write
 	}
 	if isReverseRequest(first) {
 		if us := dss.acceptReverse(conn, reader, first, &remaining); us != nil {
-			// Release the slot so an immediate viewer can connect after REVERSED.
 			dss.finishPending()
 			pending, handedOff = false, true
 			us.run()
@@ -156,7 +155,7 @@ func (dss *dStreamStorage) classifyTCP(ctx context.Context, conn net.Conn, write
 	defer dss.mu.Unlock()
 	dss.pending--
 	pending = false
-	if dss.closing || ctx.Err() != nil {
+	if dss.viewerAtCapacity() || ctx.Err() != nil {
 		return
 	}
 	if err := dss.openLocked(replayed, writer); err != nil {
