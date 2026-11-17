@@ -52,9 +52,22 @@ func (c *tcpIngressConn) Close() error {
 	return c.Conn.Close()
 }
 
-// newTCPMux gives QTV the first match because HTTP is the catch-all. Release
-// HTTP's slot in the matcher so serving an HTTP request cannot tie up capacity
-// needed to classify new sockets.
+// cmux can queue a matched connection before net/http accepts it. Keep the
+// slot until that handoff so sockets waiting in cmux still count.
+type httpIngressListener struct {
+	net.Listener
+}
+
+func (l httpIngressListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	conn.(*cmux.MuxConn).Conn.(*tcpIngressConn).release()
+	return conn, nil
+}
+
+// newTCPMux gives QTV the first match because HTTP is the catch-all.
 func newTCPMux(ctx context.Context, listener net.Listener, allowHTTP bool, classificationLimit int) (cmux.CMux, net.Listener, net.Listener) {
 	ingress := &tcpIngressListener{Listener: listener, ctx: ctx, slots: make(chan struct{}, classificationLimit)}
 	mux := cmux.New(ingress)
@@ -62,10 +75,7 @@ func newTCPMux(ctx context.Context, listener net.Listener, allowHTTP bool, class
 	qtvListener := mux.Match(cmux.PrefixMatcher("QTV"))
 	var httpListener net.Listener
 	if allowHTTP {
-		httpListener = mux.MatchWithWriters(func(w io.Writer, _ io.Reader) bool {
-			w.(*tcpIngressConn).release()
-			return true
-		})
+		httpListener = httpIngressListener{mux.Match(cmux.Any())}
 	}
 	return mux, qtvListener, httpListener
 }
