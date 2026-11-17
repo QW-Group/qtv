@@ -11,13 +11,14 @@ import (
 
 // QW protocol reader (deserializer) and writer (serializer).
 type qProtocol struct {
-	us                 *uStream    // Link to upstream which contains this struct.
-	w                  *netMsgW    // Message for writing/generating data.
-	r                  *netMsgR    // Message for reading/parsing data.
-	svc                protocolSvc // QW protocol SVC for currently parsed message.
-	messageType        mvdMsgType  // MVD message type for currently parsed message.
-	playersMask        uint32      // MVD players mask for currently parsed message.
-	protocolReaderData             // Cumulative data we parsed from message(s). Resets on each map load. HUGE!
+	us                 *uStream      // Link to upstream which contains this struct.
+	w                  *netMsgW      // Message for writing/generating data.
+	r                  *netMsgR      // Message for reading/parsing data.
+	svc                protocolSvc   // QW protocol SVC for currently parsed message.
+	messageType        mvdMsgType    // MVD message type for currently parsed message.
+	playersMask        uint32        // MVD players mask for currently parsed message.
+	remoteHostName     atomic.String // Read concurrently by SOURCELIST.
+	protocolReaderData               // Cumulative data we parsed from message(s). Resets on each map load. HUGE!
 }
 
 func newQProtocol(us *uStream) *qProtocol {
@@ -42,7 +43,13 @@ func (qp *qProtocol) reset() {
 	qp.svc = 0
 	qp.messageType = 0
 	qp.playersMask = 0
-	// Reset reader storage.
+	qp.resetReaderData()
+}
+
+// resetReaderData discards the previous map. Clear the hostname separately
+// with Store because SOURCELIST can read it during the bulk reset.
+func (qp *qProtocol) resetReaderData() {
+	qp.remoteHostName.Store("")
 	qp.protocolReaderData.reset()
 }
 
@@ -70,8 +77,7 @@ type protocolReaderData struct {
 	cdTrack          byte
 	hasCDTrack       bool
 	serverInfo       info.InfoTs
-	remoteHostName   atomic.String // Remote serverinfo hostname. (atomic since it could be used concurrently by upstream and downstream)
-	upstreamIsProxy  bool          // Upstream advertised *qtv in fullserverinfo.
+	upstreamIsProxy  bool // Upstream advertised *qtv in fullserverinfo.
 	// meag:
 	// MVDSV sends STAT_TIME directly to player, so it isn't in mvd/qtv stream,
 	// but STAT_MATCHSTARTTIME is sent (by KTX) every time the player respawns, so can pick this value up and use a local offset to guess.

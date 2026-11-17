@@ -15,7 +15,6 @@ import (
 	"github.com/markphelps/optional"
 	"github.com/qw-group/qtv/pkg/info"
 	"github.com/rs/zerolog/log"
-	"github.com/soheilhy/cmux"
 	"go.uber.org/atomic"
 )
 
@@ -32,6 +31,7 @@ type dStream struct {
 	cancelFunc           context.CancelFunc // Context cancel func.
 	canceled             atomic.Bool        // True if context was canceled with cancel func.
 	conn                 net.Conn           // Network connection with downstream.
+	writer               io.Writer          // Native socket for batched TCP writes. Other transports use conn.
 	ioECh                chan error         // This channel used for receiving IO errors from ioReader/ioWriter goroutines.
 	dssNotifyCh          chan<- dStreamId   // Send id there when we about to quit so dStreamStorage will do clean up.
 	rb                   *byteQueue         // Input buffer from downsstream.
@@ -54,7 +54,7 @@ type dStream struct {
 }
 
 // Allocates new downsteam.
-func newDStream(qtv *QTV, dssNotifyCh chan<- dStreamId, conn net.Conn, dsId dStreamId) (ds *dStream, err error) {
+func newDStream(qtv *QTV, dssNotifyCh chan<- dStreamId, conn net.Conn, writer io.Writer, dsId dStreamId) (ds *dStream, err error) {
 	defer func() { err = multierror.Prefix(err, "newDStream:") }()
 
 	rb, err := newByteQueue(qtv.qvs.Get("dstream_read_buf_size").Int, 4*1024)
@@ -75,6 +75,7 @@ func newDStream(qtv *QTV, dssNotifyCh chan<- dStreamId, conn net.Conn, dsId dStr
 		id:           dsId,
 		cancelFunc:   cancel,
 		conn:         conn,
+		writer:       writer,
 		dssNotifyCh:  dssNotifyCh,
 		ioECh:        make(chan error, 2),
 		rb:           rb,
@@ -529,6 +530,11 @@ func (ds *dStream) parseOneHeader(s string) (err error) {
 	// Unquoted value.
 	v = unquote(qv)
 
+	if n == "REVERSE" || n == "RESPONSE" {
+		ds.sendPermanentError("invalid viewer request")
+		return errors.New("reverse header in viewer request")
+	}
+
 	log.Trace().Str("ctx", "dStream").Str("event", "header").Uint32("id", uint32(ds.id)).Str("header", n).Str("value", qv).Msg("")
 
 	switch n {
@@ -588,19 +594,14 @@ func (ds *dStream) ioReader(ctx context.Context) (err error) {
 	return err
 }
 
-// Writer goroutine, perform write do downsteam TCP connection from dowstream write buffer.
+// ioWriter drains the downstream output queue to the selected writer.
 func (ds *dStream) ioWriter(ctx context.Context) (err error) {
 	defer func() {
 		log.Trace().Str("ctx", "dStream").Str("name", "ioWriter").Uint32("id", uint32(ds.id)).Str("event", "out").Msg("")
 	}()
 	defer func() { err = multierror.Prefix(err, "dStream.ioWriter:") }()
 
-	var writer io.Writer = ds.conn
-	if conn, ok := ds.conn.(*cmux.MuxConn); ok {
-		// Only unwrap writes: reads must retain cmux's sniffed input prefix.
-		writer = conn.Conn
-	}
-	_, err = ds.wb.WriteToWithPermit(ctx, writer, ds.writeReady)
+	_, err = ds.wb.WriteToWithPermit(ctx, ds.writer, ds.writeReady)
 	if err == nil {
 		err = io.EOF
 	}

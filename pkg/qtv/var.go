@@ -39,6 +39,7 @@ const (
 	qVarFlagReadOnly   = 1 << iota // Variable is read only.
 	qVarFlagInitOnly               // Variable could be changed only while QTV is not fully initialized.
 	qVarFlagServerInfo             // Variable mirrored inside server info.
+	qVarFlagSecret                 // Hide from console queries and expansion.
 )
 
 func newQVar(value string) *qVar {
@@ -216,7 +217,7 @@ func (qs *qVarStorage) Del(name string) {
 func (qs *qVarStorage) ExpandString(str string) string {
 	mapper := func(varName string) string {
 		qv := qs.Find(varName)
-		if qv == nil {
+		if qv == nil || (qv.Flags&qVarFlagSecret) != 0 {
 			return ""
 		}
 		return qv.Str
@@ -234,7 +235,11 @@ func (qs *qVarStorage) CommandIsVar(qtv *QTV, cmdArgs *qCmdArgs) (bool, error) {
 		return false, nil
 	}
 	if cmdArgs.Argc() == 1 {
-		fmt.Printf("%q is %q\n", name, qv.Str)
+		value := qv.Str
+		if (qv.Flags & qVarFlagSecret) != 0 {
+			value = "<hidden>"
+		}
+		fmt.Printf("%q is %q\n", name, value)
 	} else {
 		qs.Set(name, cmdArgs.Args())
 	}

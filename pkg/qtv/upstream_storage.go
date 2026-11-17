@@ -1,9 +1,11 @@
 package qtv
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/markphelps/optional"
+	"github.com/qw-group/qtv/pkg/info"
 	"github.com/qw-group/qtv/pkg/pools"
 	"github.com/rs/zerolog/log"
 )
@@ -227,6 +230,32 @@ func (uss *uStreamStorage) open(server string, lock bool, options uStreamOptions
 
 		return us, true, nil
 	}
+}
+
+// registerReverse publishes the source ID before REVERSED can expose it to a
+// viewer.
+func (uss *uStreamStorage) registerReverse(conn net.Conn, reader *bufio.Reader, ui *info.Info) (*uStream, error) {
+	uss.mu.Lock()
+	defer uss.mu.Unlock()
+	if uss.closing || uss.qtv.ctx.Err() != nil || len(uss.stream) >= uss.maxServers() {
+		return nil, errors.New("reverse upstream capacity unavailable")
+	}
+	id := uStreamId(uss.ids.Get())
+	if err := ui.Set("streamid", id); err != nil {
+		uss.ids.Put(uint32(id))
+		return nil, err
+	}
+	name := fmt.Sprintf("Reverse stream %d", id)
+	transport := newReverseUStreamTCP(uss.qtv, conn, reader, ui.String())
+	us, err := newUStreamWithIO(uss.qtv, uss.notifyCh, name, name, id, uStreamOptions{}, transport)
+	if err != nil {
+		uss.ids.Put(uint32(id))
+		return nil, err
+	}
+	uss.stream[us.ussName] = us
+	uss.streamById[us.id] = us
+	log.Info().Str("ctx", "uStreamStorage").Str("event", "open").Uint32("id", uint32(us.id)).Msg("")
+	return us, nil
 }
 
 func (uss *uStreamStorage) openAndRun(server string, lock bool, options uStreamOptions) (us *uStream, err error) {

@@ -17,7 +17,6 @@ import (
 	"github.com/qw-group/qtv/pkg/info"
 	"github.com/qw-group/qtv/pkg/qfs"
 	"github.com/rs/zerolog/log"
-	"github.com/soheilhy/cmux"
 	"go.uber.org/atomic"
 )
 
@@ -535,13 +534,7 @@ func (qtv *QTV) ListenAndServe() (err error) {
 
 	// Since we listen QTV and HTTP protocol on the same port we have to do multiplexing.
 	// In golang it somewhat tricky, we have to resort to third party module CMux.
-	mux := cmux.New(listener)
-	mux.SetReadTimeout(50 * time.Millisecond)
-	downstreamListener := mux.Match(cmux.PrefixMatcher("QTV"))
-	var httpListener net.Listener
-	if qtv.httpSv.isEnabled() {
-		httpListener = mux.Match(cmux.Any())
-	}
+	mux, downstreamListener, httpListener := newTCPMux(qtv.ctx, listener, qtv.httpSv.isEnabled(), qtvMaxClients)
 
 	// Start all our goroutines.
 	g := multierror.Group{}

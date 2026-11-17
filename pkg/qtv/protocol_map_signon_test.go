@@ -6,6 +6,27 @@ import (
 	"testing"
 )
 
+func TestMapResetClearsRemoteHostNameConcurrently(t *testing.T) {
+	us, _ := bufferingTestStream(t, 0, false)
+	us.linkedDs = nil
+	us.qp.remoteHostName.Store("previous source name")
+
+	// SOURCELIST reads the hostname without taking the upstream mutex.
+	readDone := make(chan struct{})
+	go func() {
+		us.qp.remoteHostName.Load()
+		close(readDone)
+	}()
+	err := us.setState(usParsingConnection)
+	<-readDone
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := us.qp.remoteHostName.Load(); got != "" {
+		t.Fatalf("map reset retained upstream hostname %q", got)
+	}
+}
+
 func TestGeneratedMapSignon(t *testing.T) {
 	for _, rd := range []bool{false, true} {
 		t.Run(fmt.Sprintf("RD=%t", rd), func(t *testing.T) {
