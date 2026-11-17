@@ -291,7 +291,7 @@ func (us *uStream) setState(state uStreamState) (err error) {
 		us.playbackQueueSaturated = false
 		us.parseTime = us.curTime + (uint64)(us.expectedIngameDelay()*1000)
 		// Reset reader storage. Should be done on each map load.
-		us.qp.protocolReaderData.reset()
+		us.qp.resetReaderData()
 		us.serverCount += 1 // We use local server count.
 		us.mu.Unlock()
 		us.sendInitialUserListToUpstream()
