@@ -2,7 +2,9 @@ package qtv
 
 import (
 	"bytes"
+	"os"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -140,6 +142,176 @@ func TestRDSignonCorrectsSharedWorld(t *testing.T) {
 	}
 }
 
+func rdDownloadViewer(t *testing.T, file []byte) (*uStream, *dStream) {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	if err := os.MkdirAll("qw/maps", 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("qw/maps/test.bsp", file, 0644); err != nil {
+		t.Fatal(err)
+	}
+	us := denseQueueTestStream()
+	(&dStreamStorage{}).regVars(us.qtv)
+	ds := rdTestViewer(us.qp, qtvEzQuakeExtDownload)
+	ds.state = dsNeedSpawn // The viewer has already received both catalogs.
+	ds.wb = mustByteQueue(192*1024, 16*1024)
+	us.linkedDs = map[dStreamId]*dStream{ds.id: ds}
+	t.Cleanup(ds.download.Reset)
+	return us, ds
+}
+
+func TestRDSpawnWaitsForDownload(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		us, ds := rdDownloadViewer(t, bytes.Repeat([]byte("b"), 192*1024))
+		if err := ds.executeClientCommand("download maps/test.bsp"); err != nil {
+			t.Fatal(err)
+		}
+		if !ds.download.IsActive() || ds.download.current == 0 {
+			t.Fatal("expected a partially queued file")
+		}
+		if err := ds.executeClientCommand("qtvspawn 7"); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(13 * time.Second) // Advance the test clock beyond the snapshot lifetime.
+		us.pumpRDSignons()
+		if !ds.rdSignon.requested || ds.rdSignon.attached || us.rdSignon.data != nil || ds.isCanceled() {
+			t.Fatal("a pending spawn must not hold a snapshot during a download")
+		}
+		if err := ds.wb.Discard(ds.wb.Length()); err != nil {
+			t.Fatal(err)
+		}
+		if err := us.processDownstreamsDownload(); err != nil {
+			t.Fatal(err)
+		}
+		if ds.download.IsActive() {
+			t.Fatal("last file block was not queued")
+		}
+		if wire := drainRDSignon(t, ds); !bytes.Contains(wire, []byte("skins\n\x00")) {
+			t.Fatal("spawn did not resume after the download")
+		}
+	})
+}
+
+func TestRDSignonPageLeavesRoomForReplies(t *testing.T) {
+	us := denseQueueTestStream()
+	ds := rdTestViewer(us.qp, 0)
+	ds.wb = mustByteQueue(192*1024, 16*1024)
+	if err := us.startRDSignon(ds); err != nil {
+		t.Fatal(err)
+	}
+	offset := ds.rdSignon.offset
+	cur := byteViewOf(us.rdSignon.data[offset:]).cursor(0)
+	next, status := inspectMVDRecord(&cur, false)
+	if status != mvdRecordComplete {
+		t.Fatal("expected another snapshot record")
+	}
+	if err := ds.wb.Discard(ds.wb.Length()); err != nil {
+		t.Fatal(err)
+	}
+	// One more byte must drain before this record fits alongside the reserve.
+	if _, err := ds.wb.WriteFull(make([]byte, ds.wb.Capacity()-next.size-511)); err != nil {
+		t.Fatal(err)
+	}
+	if err := us.pageRDSignon(ds); err != nil || ds.rdSignon.offset != offset {
+		t.Fatal("snapshot used the reply reserve", err)
+	}
+	if err := ds.wb.Discard(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := us.pageRDSignon(ds); err != nil || ds.wb.Available() != 512 || ds.rdSignon.offset != offset+next.size {
+		t.Fatal("snapshot did not resume at the reserve boundary", err)
+	}
+}
+
+func TestRDSignonRejectsDownloadBeforeSkins(t *testing.T) {
+	for _, full := range []bool{false, true} {
+		name := "snapshot reserves space"
+		if full {
+			name = "other traffic filled the queue"
+		}
+		t.Run(name, func(t *testing.T) {
+			us, ds := rdDownloadViewer(t, []byte("map-contents"))
+			if err := ds.executeClientCommand("qtvspawn 7"); err != nil || !ds.rdSignon.attached {
+				t.Fatal("viewer did not attach", err)
+			}
+			if ds.wb.Available() < 512 {
+				t.Fatal("snapshot left too little room for command replies")
+			}
+			if full {
+				if _, err := ds.wb.WriteFull(make([]byte, ds.wb.Available())); err != nil {
+					t.Fatal(err)
+				}
+			}
+			old := ds.wb.Length()
+			if err := ds.executeClientCommand("download maps/test.bsp"); err != nil {
+				t.Fatal(err)
+			}
+			denial := rdTestMVD([]byte{byte(svc_download), 255, 255, 0})
+			reply := queueBytes(ds.wb)[old:]
+			if !full && !bytes.Equal(reply, denial) {
+				t.Fatal("expected immediate download refusal")
+			}
+			if full && len(reply) != 0 {
+				t.Fatal("full queue contains partial refusal")
+			}
+			if err := ds.wb.Discard(old); err != nil {
+				t.Fatal(err)
+			}
+			if full {
+				us.pumpRDSignons()
+				if ds.wb.Length() != 0 {
+					t.Fatal("signon advanced ahead of the outstanding refusal")
+				}
+			}
+			if err := us.processDownstreamsDownload(); err != nil {
+				t.Fatal(err)
+			}
+			wire := drainRDSignon(t, ds)
+			if !bytes.HasPrefix(wire, denial) || bytes.Count(wire, denial) != 1 ||
+				!bytes.Contains(wire[len(denial):], []byte("skins\n\x00")) || ds.isCanceled() {
+				t.Fatal("expected one refusal before skins and successful signon")
+			}
+		})
+	}
+}
+
+func TestRDDownloadRefusalSurvivesMapChange(t *testing.T) {
+	us, ds := rdDownloadViewer(t, nil)
+	us.wb = mustByteQueue(4096, 512)
+	if err := ds.executeClientCommand("qtvspawn 7"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ds.wb.WriteFull(make([]byte, ds.wb.Available())); err != nil {
+		t.Fatal(err)
+	}
+	if err := ds.executeClientCommand("download maps/test.bsp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := us.qp.readMessage(rdTestServerData(0, 0, 0), mvdMsgRead, playersMaskAll); err != nil {
+		t.Fatal(err)
+	}
+	if err := us.qp.readMessage(append([]byte{byte(svc_stufftext)}, "skins\n\x00"...), mvdMsgRead, playersMaskAll); err != nil {
+		t.Fatal(err)
+	}
+	if err := ds.wb.Discard(ds.wb.Length()); err != nil {
+		t.Fatal(err)
+	}
+	if err := us.sendInitialMVDData(ds); err != nil || ds.wb.Length() != 0 {
+		t.Fatal("new serverdata overtook the refusal", err)
+	}
+	if err := us.processDownstreamsDownload(); err != nil {
+		t.Fatal(err)
+	}
+	if err := us.sendInitialMVDData(ds); err != nil {
+		t.Fatal(err)
+	}
+	denial := rdTestMVD([]byte{byte(svc_download), 255, 255, 0})
+	if wire := queueBytes(ds.wb); !bytes.HasPrefix(wire, denial) || len(wire) <= len(denial) || ds.state != dsNeedSoundList {
+		t.Fatal("expected the refusal followed by the new map's signon")
+	}
+}
+
 func TestRDSignonDefaultJoinWindow(t *testing.T) {
 	us := denseQueueTestStream()
 	newViewer := func() *dStream {
@@ -180,6 +352,9 @@ func TestRDSignonDeadlineAndNextGroup(t *testing.T) {
 	us.pumpRDSignons()
 	if !slow.rdSignon.attached {
 		t.Fatal("first viewer did not start")
+	}
+	if err := slow.executeClientCommand("download maps/test.bsp"); err != nil {
+		t.Fatal(err)
 	}
 	us.linkedDs[next.id] = next
 	us.pumpRDSignons()

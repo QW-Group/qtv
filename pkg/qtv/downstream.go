@@ -126,9 +126,10 @@ func (ds *dStream) cancel() error {
 
 // Downstream download related info.
 type dStreamDownload struct {
-	file    *os.File // File to download by client.
-	size    int64    // How much bytes bytes to download.
-	current int64    // How much bytes currently downloaded by client.
+	denialPending bool     // An unsent download refusal must precede skins or the next map's serverdata.
+	file          *os.File // File to download by client.
+	size          int64    // How much bytes bytes to download.
+	current       int64    // How much bytes currently downloaded by client.
 }
 
 // Returns true if download in process for downstream.

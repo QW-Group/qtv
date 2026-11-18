@@ -399,7 +399,7 @@ func (us *uStream) sendMVDDataDown(b []byte) (err error) {
 func (us *uStream) sendInitialMVDData(ds *dStream) (err error) {
 	defer func() { err = multierror.Prefix(err, "uStream.sendInitialMVDData:") }()
 
-	if us.getState() != usActive || ds.download.IsActive() ||
+	if us.getState() != usActive || ds.download.IsActive() || ds.download.denialPending ||
 		(us.qp.usesRD() && (us.qp.rd == nil || !us.qp.rd.ready)) {
 		return nil // Upstream not ready, do it later.
 	}

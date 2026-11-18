@@ -112,6 +112,10 @@ func (ds *dStream) rdSignonHeadroom() int {
 
 func (us *uStream) startRDSignon(ds *dStream) error {
 	ds.rdSignon.requested = true
+	if ds.download.IsActive() {
+		// Remember qtvspawn, but start signon only after the last file block is queued.
+		return nil
+	}
 	return us.sendRDSignon(ds, time.Now())
 }
 
@@ -184,6 +188,9 @@ func (us *uStream) sendRDSignon(ds *dStream, now time.Time) error {
 }
 
 func (us *uStream) pageRDSignon(ds *dStream) error {
+	if ds.download.denialPending {
+		return nil
+	}
 	snapshot := &us.rdSignon
 	start := ds.rdSignon.offset
 	end := start
@@ -197,7 +204,10 @@ func (us *uStream) pageRDSignon(ds *dStream) error {
 		if header.size > ds.wb.Capacity() {
 			return errors.New("RD snapshot record exceeds viewer queue")
 		}
-		if header.size > available-(end-start) {
+		// Keep room for small command replies between snapshot pages. A single
+		// large record may need the entire queue to make progress.
+		reserve := min(512, ds.wb.Capacity()-header.size)
+		if header.size+reserve > available-(end-start) {
 			break
 		}
 		end += header.size

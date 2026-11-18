@@ -442,6 +442,12 @@ func (ds *dStream) downloadClientCmd(tr *tokenizerResult) (err error) {
 		return ds.svcPrintf(printHigh, "download [filename]\n")
 	}
 
+	if ds.rdSignon.attached || ds.download.denialPending {
+		// ezQuake can request a skin as soon as it handles skins. Download
+		// replies carry no filename, so resolve the manual request first.
+		return ds.rejectSignonDownload()
+	}
+
 	name := tr.Argv(1)
 	gameDir := us.gameDir()
 
@@ -511,8 +517,22 @@ func (ds *dStream) downloadClientCmd(tr *tokenizerResult) (err error) {
 	return ds.svcPrintf(printHigh, "File %s is %vKB (%.2fMB)\n", name, ds.download.size/1024, float64(ds.download.size)/1024/1024)
 
 denyDownload:
+	return ds.denyDownload()
+}
 
-	msg := us.qp.w.Clear()
+// Retry a refusal on the download tick if other replies fill the queue.
+// ezQuake has one current download, so one pending reply is enough.
+func (ds *dStream) rejectSignonDownload() error {
+	err := ds.denyDownload()
+	ds.download.denialPending = errors.Is(err, errByteQueueFull)
+	if ds.download.denialPending {
+		return nil
+	}
+	return err
+}
+
+func (ds *dStream) denyDownload() error {
+	msg := ds.linkedUs.qp.w.Clear()
 
 	msg.PutSVC(svc_download)
 	msg.PutUint16(math.MaxUint16)
