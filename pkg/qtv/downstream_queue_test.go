@@ -73,7 +73,7 @@ func TestDownstreamQueueReusesThreeBlockBursts(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	if ds.wb.blockSize != 16*1024 || ds.wb.Capacity() != 192*1024 || len(ds.wb.blocks) != 0 || len(ds.wb.spares) != 0 {
+	if ds.wb.blockSize != 16*1024 || ds.wb.Capacity() != 256*1024 || len(ds.wb.blocks) != 0 || len(ds.wb.spares) != 0 {
 		t.Fatal("viewer output must keep its lazy 16 KiB blocks and byte budget")
 	}
 	payload := make([]byte, 32*1024+1)
@@ -177,7 +177,7 @@ func TestDownstreamQueueReplyFlush(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if ds.rb.Capacity() != 32768 || ds.wb.Capacity() != 196608 {
+	if ds.rb.Capacity() != 32768 || ds.wb.Capacity() != 256*1024 {
 		t.Fatal("viewer defaults")
 	}
 	// Fragment the request across IO reads, using the real main loop and reply builder.
