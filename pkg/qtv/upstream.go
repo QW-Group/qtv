@@ -35,6 +35,7 @@ var (
 
 // Upstream representation object.
 type uStream struct {
+	rdSignon rdSignonSnapshot
 	// {
 	// mu protects fields under curly braces.
 	// Purpose of this mutex is to help synchronize dStream and uStream.
@@ -883,6 +884,7 @@ func (us *uStream) downstreamInputNotify(dsId dStreamId) {
 func (us *uStream) restartDownstreamSignon() {
 	us.mu.Lock()
 	defer us.mu.Unlock()
+	us.rdSignon = rdSignonSnapshot{}
 
 	for _, ds := range us.linkedDs {
 		if err := ds.setState(dsNeedInitialData); err != nil {

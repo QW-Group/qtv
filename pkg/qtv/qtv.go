@@ -211,6 +211,7 @@ func (qtv *QTV) regVars() {
 	qtv.qvs.RegEx("hostname", "unnamed", qVarFlagServerInfo, nil)
 	qtv.qvs.Reg("tick_time", "100")
 	qtv.qvs.Reg("demo_dir", "demos")
+	registerRDSignonVars(qtv)
 	qtv.regLogVars()
 }
 

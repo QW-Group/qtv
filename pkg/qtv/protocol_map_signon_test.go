@@ -2,7 +2,6 @@ package qtv
 
 import (
 	"bytes"
-	"fmt"
 	"testing"
 )
 
@@ -28,8 +27,16 @@ func TestMapResetClearsRemoteHostNameConcurrently(t *testing.T) {
 }
 
 func TestGeneratedMapSignon(t *testing.T) {
-	for _, rd := range []bool{false, true} {
-		t.Run(fmt.Sprintf("RD=%t", rd), func(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		extensions uint32
+		resetFirst bool
+	}{
+		{"legacy", 0, false},
+		{"RD/skins-first", ftePext2ReplacementDeltas, false},
+		{"RD/reset-first", ftePext2ReplacementDeltas, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			q := rdWriterSource(t, false)
 			us := q.us
 			us.rb = mustByteQueue(4096, 64)
@@ -52,33 +59,40 @@ func TestGeneratedMapSignon(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			var bits uint32
-			if rd {
-				bits = ftePext2ReplacementDeltas
-			}
-			feed(rdTestMVD(rdTestServerData(0, bits, 0)))
+			rd := tc.extensions != 0
+			feed(rdTestMVD(rdTestServerData(0, tc.extensions, 0)))
 			if viewer.state != dsNeedInitialData || viewer.wb.Length() != 0 {
 				t.Fatalf("new serverdata reached viewer before signon was ready, state=%v", viewer.state)
 			}
 			feed(rdTestMVD([]byte{byte(svc_cdtrack), 4}))
-			feed(rdTestMVD(append([]byte{byte(svc_stufftext)}, "skins\n\x00"...)))
+			ready := rdTestMVD(append([]byte{byte(svc_stufftext)}, "skins\n\x00"...))
 			if rd {
-				if viewer.state != dsNeedInitialData || viewer.wb.Length() != 0 {
-					t.Fatal("RD signon was sent before the first world reset")
+				reset := rdTestMVD(append([]byte{byte(svc_fte_updateentities)}, rdTestFrame([]byte{0, 128})...))
+				if tc.resetFirst {
+					feed(reset)
+				} else {
+					feed(ready)
+					ready = reset
 				}
-				feed(rdTestMVD(append([]byte{byte(svc_fte_updateentities)}, rdTestFrame([]byte{0, 128})...)))
+				if viewer.state != dsNeedInitialData || viewer.wb.Length() != 0 {
+					t.Fatal("RD signon was sent before both skins and the first world reset")
+				}
 			}
+			live := rdTestMVD(append([]byte{byte(svc_print), byte(printHigh)}, "Match started\n\x00"...))
+			feed(append(ready, live...))
 			if viewer.state != dsActive || viewer.isCanceled() {
 				t.Fatalf("viewer did not resume on the same connection, state=%v", viewer.state)
 			}
-			got, _ := rdTestDecodeSnapshot(t, queueBytes(viewer.wb))
+			wire := queueBytes(viewer.wb)
+			got, chunks := rdTestDecodeSnapshot(t, wire)
 			if got.mapName != "map" || got.usesRD() != rd || !got.hasCDTrack || got.cdTrack != 4 {
 				t.Fatalf("wrong generated signon: map=%q RD=%t track=%d (present=%t)", got.mapName, got.usesRD(), got.cdTrack, got.hasCDTrack)
 			}
-			live := rdTestMVD([]byte{byte(svc_nop)})
-			feed(live)
-			if !bytes.HasSuffix(queueBytes(viewer.wb), live) {
-				t.Fatal("live forwarding did not resume after signon")
+			if !bytes.HasSuffix(wire, live) || bytes.Count(wire, live) != 1 {
+				t.Fatal("first live record in the same parse pass must follow signon exactly once")
+			}
+			if rd && (chunks != 1 || bytes.Count(wire, []byte("skins\n\x00")) != 1) {
+				t.Fatal("RD viewer received the signon boundary record twice")
 			}
 		})
 	}

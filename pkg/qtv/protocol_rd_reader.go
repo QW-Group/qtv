@@ -286,7 +286,25 @@ func (qp *qProtocol) readRDUpdate() error {
 			return errors.New("RD model index exceeds resource capacity")
 		}
 	}
-	return qp.ensureRD().apply(f)
+	world := qp.ensureRD()
+	snapshot := &qp.us.rdSignon
+	if snapshot.data != nil && f.reset {
+		// Remember entities cleared by a reset even if it carries no updates.
+		for id, present := range world.present {
+			if present {
+				snapshot.dirty.set(uint32(id))
+			}
+		}
+	}
+	if err := world.apply(f); err != nil {
+		return err
+	}
+	if snapshot.data != nil {
+		for i := range f.updates {
+			snapshot.dirty.set(f.updates[i].number)
+		}
+	}
+	return nil
 }
 
 // readRDSignon accepts RD payloads and the legacy baseline/static form allowed by FTE.
@@ -332,6 +350,13 @@ func (qp *qProtocol) readRDSignon(delta, numbered bool) error {
 		w.baselines[s.number] = s
 		w.baselinePresent[s.number] = true
 		w.baselineClassic[s.number] = !delta
+		if snapshot := &qp.us.rdSignon; snapshot.data != nil {
+			snapshot.baselines.set(s.number)
+			// Only live entities need rebasing. Removing absent ID 0 would reset the world.
+			if w.present[s.number] {
+				snapshot.dirty.set(s.number)
+			}
+		}
 	} else {
 		if len(w.statics) >= maxStaticEntities {
 			return errors.New("too many RD statics")

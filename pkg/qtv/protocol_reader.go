@@ -335,12 +335,17 @@ func (qp *qProtocol) readStaticSound(extended bool) error {
 }
 
 func (qp *qProtocol) readInterMission() error {
+	start := qp.r.rPos - 1 // Include the opcode for replay.
 	qp.r.GetCoord()
 	qp.r.GetCoord()
 	qp.r.GetCoord()
 	qp.r.GetAngle()
 	qp.r.GetAngle()
 	qp.r.GetAngle()
+	if qp.usesRD() && qp.messageType == mvdMsgAll && !qp.r.error {
+		qp.intermission = append(qp.intermission[:0], qp.r.b[start:qp.r.rPos]...)
+		qp.finale = nil
+	}
 	return nil
 }
 
@@ -956,7 +961,12 @@ func (qp *qProtocol) readSetPause() error {
 }
 
 func (qp *qProtocol) readFinale() error {
+	start := qp.r.rPos - 1
 	qp.r.SkipString()
+	if qp.usesRD() && qp.messageType == mvdMsgAll && !qp.r.error {
+		// A finale changes the text but keeps the preceding intermission camera.
+		qp.finale = append(qp.finale[:0], qp.r.b[start:qp.r.rPos]...)
+	}
 	return nil
 }
 
@@ -1047,11 +1057,15 @@ func (qp *qProtocol) readSoundList(extended bool) error {
 
 func (qp *qProtocol) readMessage(b []byte, messageType mvdMsgType, playersMask uint32) (err error) {
 	defer func() { err = multierror.Prefix(err, "qp.readMessage:") }()
-	defer qp.r.Reset(nil, false) // That prevents keeping invalid reference to 'b' after we return.
-
+	if messageType != mvdMsgRead {
+		qp.messageType = messageType
+		qp.playersMask = playersMask
+	}
+	if len(b) == 0 {
+		return nil // Empty and hidden records still set the route for the next dem_read.
+	}
 	qp.r.Reset(b, (qp.extFlagsFTE1&ftePextFloatCoords) != 0)
-	qp.messageType = messageType
-	qp.playersMask = playersMask
+	defer qp.r.Reset(nil, false) // Release the reference to the upstream buffer.
 
 	for qp.r.rPos < len(b) && qp.r.error == false {
 		qp.svc = qp.r.GetSVC()

@@ -121,8 +121,7 @@ func rdTestDecodeSnapshot(t *testing.T, data []byte) (*qProtocol, int) {
 		if status != mvdRecordComplete || record.size != size {
 			t.Fatalf("snapshot framing: status=%d size=%d want=%d", status, record.size, size)
 		}
-		payload := record.quakePayload(data[:size], q.extFlagsMVD1&mvdPext1HiddenMessages != 0)
-		if _, err := q.us.parseMVDMessage(record, payload, 1); err != nil {
+		if _, err := q.us.parseMVDMessage(record, data[:size], 1); err != nil {
 			t.Fatal("snapshot decode:", err)
 		}
 		data = data[size:]
@@ -226,8 +225,15 @@ func TestRDSnapshotBoundary(t *testing.T) {
 		if err := q.us.sendMVDDataDown(packet); err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.HasSuffix(queueBytes(ds.wb), packet) {
-			t.Fatal("newly active viewer did not receive the boundary record")
+		if ds.state != dsActive || bytes.HasSuffix(queueBytes(ds.wb), packet) {
+			t.Fatal("the snapshot should include the boundary state without forwarding the record")
+		}
+		next := rdTestMVD([]byte{byte(svc_cdtrack), 42})
+		if err := q.us.sendMVDDataDown(next); err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.HasSuffix(queueBytes(ds.wb), next) {
+			t.Fatal("newly active viewer did not receive the next record")
 		}
 		got, _ := rdTestDecodeSnapshot(t, queueBytes(ds.wb))
 		for _, id := range []int{1, 16383} {

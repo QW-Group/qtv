@@ -1,5 +1,7 @@
 package qtv
 
+import "math/bits"
+
 // QW protocol writer (serializer).
 // Functions with 'put' prefix puts data inside msg.
 // Functions with 'send' prefix sends data to dStream.
@@ -39,9 +41,14 @@ func (qp *qProtocol) sendServerData(ds *dStream) error {
 	msg.PutFloat32(qp.moveVars.waterFriction)
 	msg.PutFloat32(qp.moveVars.entgrav)
 
-	qp.putStuffTextf(msg, "fullserverinfo \"%s\"\n", qp.serverInfo.String())
+	qp.putFullServerInfo(msg)
 
-	return ds.sendMVDMessage(msg, mvdMsgRead, playersMaskAll)
+	// A continuing viewer may still have a private route from the previous map.
+	return ds.sendMVDMessage(msg, mvdMsgAll, playersMaskAll)
+}
+
+func (qp *qProtocol) putFullServerInfo(msg *netMsgW) {
+	qp.putStuffTextf(msg, "fullserverinfo \"%s\"\n", qp.serverInfo.String())
 }
 
 func (qp *qProtocol) putList(msg *netMsgW, first int, list []string, svc protocolSvc, svcExtended protocolSvc) (i int) {
@@ -485,7 +492,16 @@ func (qp *qProtocol) sendPause(ds *dStream) error {
 func (qp *qProtocol) sendPlaybackDelay(ds *dStream, delay byte) error {
 	msg := qp.w.Clear()
 
-	return ds.sendMVDMessageEx(msg, mvdMsgAll, playersMaskAll, 0, delay)
+	kind := mvdMsgAll
+	mask := uint32(playersMaskAll)
+	if qp.usesRD() {
+		// Restore the upstream route in case the first live record is dem_read.
+		kind, mask = qp.messageType, qp.playersMask
+		if kind == mvdMsgStats || kind == mvdMsgSingle {
+			kind |= mvdMsgType(bits.TrailingZeros32(mask) << 3)
+		}
+	}
+	return ds.sendMVDMessageEx(msg, kind, mask, 0, delay)
 }
 
 func (qp *qProtocol) putStuffTextf(msg *netMsgW, format string, a ...interface{}) {
@@ -505,6 +521,10 @@ func (qp *qProtocol) sendStuffTextf(ds *dStream, format string, a ...interface{}
 }
 
 func (qp *qProtocol) sendPlayerStats(ds *dStream) error {
+	return qp.sendPlayerStatsWithZeros(ds, false)
+}
+
+func (qp *qProtocol) sendPlayerStatsWithZeros(ds *dStream, includeZeros bool) error {
 	msg := qp.w.Clear()
 
 	sentTimes := false
@@ -518,7 +538,7 @@ func (qp *qProtocol) sendPlayerStats(ds *dStream) error {
 		msg.Clear()
 
 		for statNum := 0; statNum < maxStats; statNum++ {
-			if client.stats[statNum] != 0 {
+			if includeZeros || client.stats[statNum] != 0 {
 				if client.stats[statNum] > 255 {
 					msg.PutSVC(svc_updatestatlong)
 					msg.PutByte(byte(statNum))

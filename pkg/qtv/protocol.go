@@ -15,7 +15,7 @@ type qProtocol struct {
 	w                  *netMsgW      // Message for writing/generating data.
 	r                  *netMsgR      // Message for reading/parsing data.
 	svc                protocolSvc   // QW protocol SVC for currently parsed message.
-	messageType        mvdMsgType    // MVD message type for currently parsed message.
+	messageType        mvdMsgType    // Last explicit MVD route, inherited by dem_read.
 	playersMask        uint32        // MVD players mask for currently parsed message.
 	remoteHostName     atomic.String // Read concurrently by SOURCELIST.
 	protocolReaderData               // Cumulative data we parsed from message(s). Resets on each map load. HUGE!
@@ -41,8 +41,8 @@ func (qp *qProtocol) reset() {
 	qp.r.Reset(nil, false)
 	// Reset MVD message related fields.
 	qp.svc = 0
-	qp.messageType = 0
-	qp.playersMask = 0
+	qp.messageType = mvdMsgAll
+	qp.playersMask = playersMaskAll
 	qp.resetReaderData()
 }
 
@@ -76,8 +76,11 @@ type protocolReaderData struct {
 	staticSoundCount int
 	cdTrack          byte
 	hasCDTrack       bool
-	serverInfo       info.InfoTs
-	upstreamIsProxy  bool // Upstream advertised *qtv in fullserverinfo.
+	// Broadcast map-end messages use the current map's coordinate format.
+	intermission    []byte
+	finale          []byte
+	serverInfo      info.InfoTs
+	upstreamIsProxy bool // Upstream advertised *qtv in fullserverinfo.
 	// meag:
 	// MVDSV sends STAT_TIME directly to player, so it isn't in mvd/qtv stream,
 	// but STAT_MATCHSTARTTIME is sent (by KTX) every time the player respawns, so can pick this value up and use a local offset to guess.
