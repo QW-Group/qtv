@@ -346,13 +346,20 @@ func (qp *qProtocol) sendRDPreSpawn(ds *dStream) error {
 	if qp.rd == nil || !qp.rd.ready {
 		return errors.New("RD startup requires an accepted world reset")
 	}
+	return qp.sendRDSignonMetadata(ds, nil, 0, 0)
+}
+
+// sendRDSignonMetadata writes current player/light state, followed by the
+// selected baselines and static entities added since the snapshot.
+func (qp *qProtocol) sendRDSignonMetadata(ds *dStream, baselines *rdSignonIDs, staticStart, soundStart int) error {
 	groups := []struct {
+		start    int
 		count    int
 		overhead int // Record bytes not included in the reused metadata helper's budget.
 		put      func(*netMsgW, int, int, int) int
-	}{{maxClients, 18, qp.putUserInfos}, {maxLightStyles, 3, qp.putLightMaps}, {maxStaticSounds, 0, qp.putStaticSounds}}
+	}{{0, maxClients, 18, qp.putUserInfos}, {0, maxLightStyles, 3, qp.putLightMaps}, {soundStart, maxStaticSounds, 0, qp.putStaticSounds}}
 	for _, group := range groups {
-		for cursor := 0; cursor < group.count; {
+		for cursor := group.start; cursor < group.count; {
 			msg := qp.w.Clear()
 			next := group.put(msg, group.overhead, maxMsgSize, cursor)
 			if next <= cursor {
@@ -381,7 +388,7 @@ func (qp *qProtocol) sendRDPreSpawn(ds *dStream) error {
 	var data [256]byte
 	record := newNetMsgW(data[:], qp.w.floatCoord)
 	for id, present := range qp.rd.baselinePresent {
-		if !present {
+		if !present || baselines != nil && !baselines.has(id) {
 			continue
 		}
 		record.Clear()
@@ -398,7 +405,8 @@ func (qp *qProtocol) sendRDPreSpawn(ds *dStream) error {
 			return err
 		}
 	}
-	for i, s := range qp.rd.statics {
+	for i := staticStart; i < len(qp.rd.statics); i++ {
+		s := qp.rd.statics[i]
 		record.Clear()
 		if i < len(qp.rd.staticClassic) && qp.rd.staticClassic[i] {
 			qp.putRDClassicSignon(record, s, false)
@@ -442,6 +450,11 @@ func (qp *qProtocol) putRDClassicSignon(msg *netMsgW, s rdEntityState, numbered 
 
 // sendRDEnts queues a self-contained retained world in bounded complete chunks.
 func (qp *qProtocol) sendRDEnts(ds *dStream) error {
+	return qp.sendRDWorld(ds, nil)
+}
+
+// sendRDWorld emits a full reset or refreshes only the selected entity IDs.
+func (qp *qProtocol) sendRDWorld(ds *dStream, dirty *rdSignonIDs) error {
 	w := qp.rd
 	if w == nil || !w.ready {
 		return errors.New("RD startup requires an accepted world reset")
@@ -449,7 +462,9 @@ func (qp *qProtocol) sendRDEnts(ds *dStream) error {
 	msg := qp.w.Clear()
 	msg.PutSVC(svc_fte_updateentities)
 	msg.PutFloat32(w.time)
-	msg.PutUint16(rdUpdateRemove)
+	if dirty == nil {
+		msg.PutUint16(rdUpdateRemove)
+	}
 	flush := func() error {
 		msg.PutUint16(0)
 		if err := ds.sendMVDMessage(msg, mvdMsgRead, playersMaskAll); err != nil {
@@ -464,15 +479,19 @@ func (qp *qProtocol) sendRDEnts(ds *dStream) error {
 	record := newNetMsgW(data[:], qp.w.floatCoord)
 	appendEntity := func(id int, s, base rdEntityState, predOnly bool) error {
 		record.Clear()
-		record.PutRDUpdateIndex(uint32(id), false)
+		remove := !w.present[id]
+		record.PutRDUpdateIndex(uint32(id), remove)
 		var err error
-		if predOnly {
+		switch {
+		case remove:
+			// The index is the whole removal record.
+		case predOnly:
 			bits := rdPredInfo
 			if !qp.w.floatCoord && qp.rdPayloadBits(s, base)&rdAnglesY != 0 && rdFineAngle(s.angles[1]) {
 				bits |= rdAnglesY
 			}
 			err = qp.putRDFields(record, s, bits)
-		} else {
+		default:
 			err = qp.putRDPayload(record, s, base)
 		}
 		if err != nil {
@@ -491,7 +510,7 @@ func (qp *qProtocol) sendRDEnts(ds *dStream) error {
 	}
 	hasTail := false
 	for id, present := range w.present {
-		if !present {
+		if dirty == nil && !present || dirty != nil && !dirty.has(id) {
 			continue
 		}
 		base := defaultRDState()
@@ -502,14 +521,14 @@ func (qp *qProtocol) sendRDEnts(ds *dStream) error {
 		if err := appendEntity(id, s, base, false); err != nil {
 			return err
 		}
-		hasTail = hasTail || qp.rdPredictionTail(s, base)
+		hasTail = hasTail || (present && qp.rdPredictionTail(s, base))
 	}
 	if err := flush(); err != nil {
 		return err
 	}
 	if hasTail {
 		for id, present := range w.present {
-			if !present {
+			if !present || dirty != nil && !dirty.has(id) {
 				continue
 			}
 			base := defaultRDState()

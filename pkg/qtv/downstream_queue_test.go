@@ -73,7 +73,7 @@ func TestDownstreamQueueReusesThreeBlockBursts(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	if ds.wb.blockSize != 16*1024 || ds.wb.Capacity() != 192*1024 || len(ds.wb.blocks) != 0 || len(ds.wb.spares) != 0 {
+	if ds.wb.blockSize != 16*1024 || ds.wb.Capacity() != 256*1024 || len(ds.wb.blocks) != 0 || len(ds.wb.spares) != 0 {
 		t.Fatal("viewer output must keep its lazy 16 KiB blocks and byte budget")
 	}
 	payload := make([]byte, 32*1024+1)
@@ -177,7 +177,7 @@ func TestDownstreamQueueReplyFlush(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if ds.rb.Capacity() != 32768 || ds.wb.Capacity() != 196608 {
+	if ds.rb.Capacity() != 32768 || ds.wb.Capacity() != 256*1024 {
 		t.Fatal("viewer defaults")
 	}
 	// Fragment the request across IO reads, using the real main loop and reply builder.
@@ -470,10 +470,10 @@ func denseQueueTestStream() *uStream {
 }
 
 func TestDownstreamQueueDenseSnapshot(t *testing.T) {
-	us := denseQueueTestStream()
-	qtv := us.qtv
 	for _, ext := range []uint32{0, qtvEzQuakeExtDownload} {
 		for _, limit := range []int{196608, 2 * 1024 * 1024} {
+			us := denseQueueTestStream()
+			qtv := us.qtv
 			ds := &dStream{state: dsNeedInitialData, linkedUs: us, wb: mustByteQueue(limit, 16384), qtvEzQuakeExt: ext}
 			e := us.sendInitialMVDData(ds)
 			if e == nil && ext != 0 {
@@ -483,16 +483,16 @@ func TestDownstreamQueueDenseSnapshot(t *testing.T) {
 					}
 				}
 			}
-			if limit == 196608 {
-				if e == nil || ds.state == dsActive {
-					t.Fatal("dense snapshot exceeded default queue", ext)
-				}
-				continue
+			if e != nil {
+				t.Fatal("dense signon", ext, e)
 			}
-			if e != nil || ds.state != dsActive {
-				t.Fatal("configured dense queue", ext, e)
+			if limit == 196608 && ds.state == dsActive {
+				t.Fatal("dense snapshot should exceed default queue", ext)
 			}
-			raw := queueBytes(ds.wb)
+			raw := drainRDSignon(t, ds)
+			if ds.state != dsActive {
+				t.Fatal("dense signon never activated", ext)
+			}
 			if ext == 0 {
 				checkDenseFilePrefetch(t, qtv, raw)
 			}
@@ -517,7 +517,7 @@ func TestDownstreamQueueDenseSnapshot(t *testing.T) {
 
 func TestDownstreamQueueViewerIsolation(t *testing.T) {
 	us := denseQueueTestStream()
-	initial := &dStream{state: dsNeedInitialData, linkedUs: us, wb: mustByteQueue(192*1024, 16*1024)}
+	initial := &dStream{state: dsNeedInitialData, linkedUs: us, wb: mustByteQueue(32, 16)}
 	full := &dStream{state: dsActive, linkedUs: us, wb: mustByteQueue(32, 16)}
 	if _, err := full.wb.WriteFull(make([]byte, 32)); err != nil {
 		t.Fatal(err)
@@ -529,6 +529,7 @@ func TestDownstreamQueueViewerIsolation(t *testing.T) {
 		if err := us.sendMVDDataDown(record); err != nil {
 			t.Fatal(err)
 		}
+		us.pumpRDSignons()
 		want = append(want, record...)
 		if !initial.isCanceled() || !full.isCanceled() || healthy.isCanceled() || us.getState() != usActive {
 			t.Fatal("viewer failure affected another connection")

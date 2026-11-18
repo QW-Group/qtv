@@ -25,6 +25,7 @@ import (
 
 // Downstream representation object.
 type dStream struct {
+	rdSignon             rdViewerSignon
 	id                   dStreamId          // Stream id.
 	qtv                  *QTV               // Parent object.
 	state                dStreamState       // Stream state.
@@ -125,9 +126,10 @@ func (ds *dStream) cancel() error {
 
 // Downstream download related info.
 type dStreamDownload struct {
-	file    *os.File // File to download by client.
-	size    int64    // How much bytes bytes to download.
-	current int64    // How much bytes currently downloaded by client.
+	denialPending bool     // An unsent download refusal must precede skins or the next map's serverdata.
+	file          *os.File // File to download by client.
+	size          int64    // How much bytes bytes to download.
+	current       int64    // How much bytes currently downloaded by client.
 }
 
 // Returns true if download in process for downstream.
@@ -203,10 +205,12 @@ func (ds *dStream) setState(state dStreamState) (err error) {
 		ds.wb.Reset()
 		ds.headers = map[string]string{}
 	case dsNeedInitialData:
+		ds.rdSignon = rdViewerSignon{}
 	case dsNeedSoundList:
 	case dsNeedModelList:
 	case dsNeedSpawn:
 	case dsActive:
+		ds.rdSignon = rdViewerSignon{}
 		ds.connectedAtLeastOnce = true
 	default:
 		return errors.New("invalid state")
@@ -314,6 +318,9 @@ func (ds *dStream) sendParts(first, second []byte) (err error) {
 		return errors.New("could not send data, stream is about to quit")
 	}
 
+	if out := ds.rdSignon.capture; out != nil {
+		return out.append(first, second)
+	}
 	_, err = ds.wb.WriteFullParts(first, second)
 	return err
 }

@@ -304,17 +304,53 @@ func (ds *dStream) spawnClientCmd(tr *tokenizerResult) (err error) {
 		return ds.setState(dsNeedInitialData)
 	}
 
+	if us.qp.usesRD() {
+		return us.startRDSignon(ds)
+	}
+	return ds.sendSpawnData()
+}
+
+func (ds *dStream) sendSpawnData() error {
+	if err := ds.sendSpawnSnapshot(true); err != nil {
+		return err
+	}
+	if err := ds.sendSpawnEnd(); err != nil {
+		return err
+	}
+	return ds.setState(dsActive)
+}
+
+func (ds *dStream) sendSpawnSnapshot(includeStats bool) error {
+	us := ds.linkedUs
 	if err := us.qp.sendPreSpawn(ds); err != nil {
 		return err
 	}
 	if err := us.qp.sendPlayers(ds); err != nil {
 		return err
 	}
-	if err := us.qp.sendPlayerStats(ds); err != nil {
-		return err
+	if includeStats {
+		if err := us.qp.sendPlayerStats(ds); err != nil {
+			return err
+		}
 	}
 	if err := us.qp.sendEnts(ds); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (ds *dStream) sendSpawnEnd() error {
+	us := ds.linkedUs
+	// A viewer can finish signon after the match ends. A cascading proxy also
+	// needs the camera and finale before skins makes its own viewers ready.
+	for _, payload := range [][]byte{us.qp.intermission, us.qp.finale} {
+		if len(payload) != 0 {
+			msg := us.qp.w.Clear()
+			msg.PutData(payload)
+			if err := ds.sendMVDMessage(msg, mvdMsgAll, playersMaskAll); err != nil {
+				return err
+			}
+		}
 	}
 	if err := us.qp.sendStuffTextf(ds, "skins\n"); err != nil {
 		return err
@@ -330,7 +366,7 @@ func (ds *dStream) spawnClientCmd(tr *tokenizerResult) (err error) {
 		return err
 	}
 
-	return ds.setState(dsActive)
+	return nil
 }
 
 // Executed periodically when download is active.
@@ -406,6 +442,12 @@ func (ds *dStream) downloadClientCmd(tr *tokenizerResult) (err error) {
 		return ds.svcPrintf(printHigh, "download [filename]\n")
 	}
 
+	if ds.rdSignon.attached || ds.download.denialPending {
+		// ezQuake can request a skin as soon as it handles skins. Download
+		// replies carry no filename, so resolve the manual request first.
+		return ds.rejectSignonDownload()
+	}
+
 	name := tr.Argv(1)
 	gameDir := us.gameDir()
 
@@ -475,8 +517,22 @@ func (ds *dStream) downloadClientCmd(tr *tokenizerResult) (err error) {
 	return ds.svcPrintf(printHigh, "File %s is %vKB (%.2fMB)\n", name, ds.download.size/1024, float64(ds.download.size)/1024/1024)
 
 denyDownload:
+	return ds.denyDownload()
+}
 
-	msg := us.qp.w.Clear()
+// Retry a refusal on the download tick if other replies fill the queue.
+// ezQuake has one current download, so one pending reply is enough.
+func (ds *dStream) rejectSignonDownload() error {
+	err := ds.denyDownload()
+	ds.download.denialPending = errors.Is(err, errByteQueueFull)
+	if ds.download.denialPending {
+		return nil
+	}
+	return err
+}
+
+func (ds *dStream) denyDownload() error {
+	msg := ds.linkedUs.qp.w.Clear()
 
 	msg.PutSVC(svc_download)
 	msg.PutUint16(math.MaxUint16)

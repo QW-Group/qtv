@@ -304,8 +304,7 @@ func (us *uStream) parseMVD() (err error) {
 			break
 		}
 		b := cur.read(header.size, &us.mvdScratch)
-		payload := header.quakePayload(b, hidden)
-		packetTime, err := us.parseMVDMessage(header, payload, demoSpeed)
+		packetTime, err := us.parseMVDMessage(header, b, demoSpeed)
 		if err != nil {
 			return err
 		}
@@ -322,6 +321,9 @@ func (us *uStream) parseMVD() (err error) {
 		return err
 	}
 	us.mvdTime.consume(totalDiscard, totalMS, us.qp.extFlagsMVD1&mvdPext1HiddenMessages != 0)
+	if !us.ioError || totalDiscard != 0 {
+		us.pumpRDSignons()
+	}
 	return nil
 }
 
@@ -337,12 +339,17 @@ func (us *uStream) tryBuffering() {
 }
 
 // parseMVDMessage applies the framed payload and advances playback time on success.
-func (us *uStream) parseMVDMessage(header mvdRecordHeader, payload []byte, demoSpeed float64) (packetTime byte, err error) {
+func (us *uStream) parseMVDMessage(header mvdRecordHeader, record []byte, demoSpeed float64) (packetTime byte, err error) {
 	defer func() { err = multierror.Prefix(err, "uStream.parseMVDMessage:") }()
 
 	packetTime = byte(float64(header.playbackMS) / demoSpeed)
 	nextPacketTime := us.parseTime + uint64(packetTime)
-	if payload != nil {
+	if header.kind != mvdMsgSet {
+		// Resolve dem_read before deciding whether its payload is hidden.
+		if header.kind == mvdMsgRead {
+			header.kind, header.playersMask = us.qp.messageType, us.qp.playersMask
+		}
+		payload := header.quakePayload(record, us.qp.extFlagsMVD1&mvdPext1HiddenMessages != 0)
 		if err := us.qp.readMessage(payload, header.kind, header.playersMask); err != nil {
 			return 0, err
 		}
@@ -362,11 +369,16 @@ func (us *uStream) sendMVDDataDown(b []byte) (err error) {
 			continue // Optimization, do not try write to the canceled stream.
 		}
 
-		if ds.getState() == dsNeedInitialData {
+		if ds.getState() == dsNeedInitialData && !ds.rdSignon.requested {
 			if err := us.sendInitialMVDData(ds); err != nil {
 				log.Trace().Err(multierror.Prefix(err, "uStream.sendMVDDataDown:")).
 					Str("ctx", "uStream").Uint32("id", uint32(us.id)).Uint32("dsId", uint32(ds.id)).Msg("")
 				ds.cancel() // Tell downstream to die.
+				continue
+			}
+			if us.qp.usesRD() {
+				// If signon completed here, it includes the state from
+				// this record. Live forwarding starts with the next one.
 				continue
 			}
 		}
@@ -387,16 +399,18 @@ func (us *uStream) sendMVDDataDown(b []byte) (err error) {
 func (us *uStream) sendInitialMVDData(ds *dStream) (err error) {
 	defer func() { err = multierror.Prefix(err, "uStream.sendInitialMVDData:") }()
 
-	if us.getState() != usActive || ds.download.IsActive() ||
+	if us.getState() != usActive || ds.download.IsActive() || ds.download.denialPending ||
 		(us.qp.usesRD() && (us.qp.rd == nil || !us.qp.rd.ready)) {
 		return nil // Upstream not ready, do it later.
 	}
 
 	if (ds.qtvEzQuakeExt & qtvEzQuakeExtDownload) != 0 {
 		return us.sendInitialMVDData_EzqExt(ds)
-	} else {
-		return us.sendInitialMVDData_1_0(ds)
 	}
+	if us.qp.usesRD() {
+		return us.startRDSignon(ds)
+	}
+	return us.sendInitialMVDData_1_0(ds)
 }
 
 func (us *uStream) sendInitialMVDData_EzqExt(ds *dStream) (err error) {
@@ -415,9 +429,14 @@ func (us *uStream) sendInitialMVDData_EzqExt(ds *dStream) (err error) {
 	return ds.setState(dsNeedSoundList)
 }
 
-func (us *uStream) sendInitialMVDData_1_0(ds *dStream) (err error) {
-	defer func() { err = multierror.Prefix(err, "uStream.sendInitialMVDData_1_0:") }()
+func (us *uStream) sendInitialMVDData_1_0(ds *dStream) error {
+	if err := us.sendInitialMVDCatalogs(ds); err != nil {
+		return err
+	}
+	return ds.sendSpawnData()
+}
 
+func (us *uStream) sendInitialMVDCatalogs(ds *dStream) error {
 	if err := us.qp.sendServerData(ds); err != nil {
 		return err
 	}
@@ -427,31 +446,5 @@ func (us *uStream) sendInitialMVDData_1_0(ds *dStream) (err error) {
 	if err := us.qp.sendList(ds, us.qp.modelList[:], svc_modellist, svc_fte_modellistshort); err != nil {
 		return err
 	}
-	if err := us.qp.sendPreSpawn(ds); err != nil {
-		return err
-	}
-	if err := us.qp.sendPlayers(ds); err != nil {
-		return err
-	}
-	if err := us.qp.sendPlayerStats(ds); err != nil {
-		return err
-	}
-	if err := us.qp.sendEnts(ds); err != nil {
-		return err
-	}
-	if err := us.qp.sendStuffTextf(ds, "skins\n"); err != nil {
-		return err
-	}
-	// Inform downstream if game is paused.
-	if us.qp.isPaused {
-		if err := us.qp.sendPause(ds); err != nil {
-			return err
-		}
-	}
-	// Workaround for ezQuake, otherwise we have invalid coordinates and model index for players.
-	if err := us.qp.sendPlaybackDelay(ds, 5); err != nil {
-		return err
-	}
-
-	return ds.setState(dsActive)
+	return nil
 }
