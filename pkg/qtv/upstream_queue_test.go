@@ -274,7 +274,7 @@ func TestUpstreamQueueFilePrefetch(t *testing.T) {
 	}
 	cur := us.rb.Snapshot()
 	c := cur.cursor(0)
-	record, status := inspectMVDRecord(&c, false)
+	record, status := inspectMVDRecord(&c, mvdContainerTime)
 	cur.release()
 	if status != mvdRecordComplete {
 		t.Fatal("prefetch framing")

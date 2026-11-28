@@ -118,6 +118,34 @@ type mvdRecordHeader struct {
 	playbackMS    byte // Timestamp used for scheduling before speed adjustment.
 }
 
+type mvdTimeMode uint8
+
+const (
+	mvdContainerTime mvdTimeMode = iota
+	mvdLegacyPauseTime
+	mvdLivePauseTime
+)
+
+func (mode mvdTimeMode) withExtensions(flags uint32) mvdTimeMode {
+	if flags&mvdPext1HiddenMessages == 0 {
+		return mvdContainerTime
+	}
+	return mode
+}
+
+func (us *uStream) mvdSourceTimeMode() mvdTimeMode {
+	if !us.isTCP() {
+		return mvdContainerTime
+	}
+	// Remote recordings also use TCP. Keep their existing timing, including
+	// the old three-byte special case. BEGIN can identify a recording by ID.
+	if strings.HasPrefix(strings.TrimPrefix(us.server, "tcp:"), "file:") ||
+		strings.HasPrefix(strings.TrimPrefix(us.hp.headers["BEGIN"], "tcp:"), "file:") {
+		return mvdLegacyPauseTime
+	}
+	return mvdLivePauseTime
+}
+
 // quakePayload returns nil for container-only and negotiated hidden records.
 func (h mvdRecordHeader) quakePayload(record []byte, hidden bool) []byte {
 	if h.kind == mvdMsgSet || (hidden && h.kind == mvdMsgMulti && h.playersMask == 0) {
@@ -127,8 +155,8 @@ func (h mvdRecordHeader) quakePayload(record []byte, hidden bool) []byte {
 }
 
 // inspectMVDRecord validates framing without advancing or normalizing time.
-func inspectMVDRecord(c *byteCursor, elapsed bool) (mvdRecordHeader, mvdRecordStatus) {
-	var scratch [13]byte
+func inspectMVDRecord(c *byteCursor, mode mvdTimeMode) (mvdRecordHeader, mvdRecordStatus) {
+	var scratch [17]byte
 	if c.left < 2 {
 		return mvdRecordHeader{}, mvdRecordIncomplete
 	}
@@ -156,15 +184,24 @@ func inspectMVDRecord(c *byteCursor, elapsed bool) (mvdRecordHeader, mvdRecordSt
 	switch h.kind {
 	case mvdMsgMulti:
 		h.playersMask = binary.LittleEndian.Uint32(b[2:6])
-		if elapsed && h.playersMask == 0 {
+		if mode != mvdContainerTime && h.playersMask == 0 {
 			// Hidden elapsed-time detection retains its 13-byte lookahead.
 			if c.left < 13 {
 				return mvdRecordHeader{}, mvdRecordIncomplete
 			}
-			if size == 3 {
-				payload := c.peek(13, scratch[:])[10:]
+			switch size {
+			case 3: // Legacy QTV format: type and elapsed milliseconds.
+				payload := c.peek(13, scratch[:])[h.payloadOffset:]
 				if binary.LittleEndian.Uint16(payload[:2]) == mvdhidden_paused_duration {
 					h.playbackMS = payload[2]
+				}
+			case 7: // Framed hidden block: body length, type and elapsed milliseconds.
+				if mode == mvdLivePauseTime && c.left >= 17 {
+					payload := c.peek(17, scratch[:])[h.payloadOffset:]
+					if binary.LittleEndian.Uint32(payload[:4]) == 1 &&
+						binary.LittleEndian.Uint16(payload[4:6]) == mvdhidden_paused_duration {
+						h.playbackMS = payload[6]
+					}
 				}
 			}
 		}
@@ -184,10 +221,10 @@ func inspectMVDRecord(c *byteCursor, elapsed bool) (mvdRecordHeader, mvdRecordSt
 }
 
 // consistantMVD reports the complete prefix and its original container time.
-func consistantMVD(b []byte, elapsed bool) (available int, milliseconds int64) {
+func consistantMVD(b []byte, mode mvdTimeMode) (available int, milliseconds int64) {
 	cur := byteViewOf(b).cursor(0)
 	for cur.left > 0 {
-		header, state := inspectMVDRecord(&cur, elapsed)
+		header, state := inspectMVDRecord(&cur, mode)
 		if state != mvdRecordComplete {
 			break
 		}
@@ -216,7 +253,7 @@ func (us *uStream) expectedIngameDelay() float64 {
 	return bound(0, expectedDelay, 15)
 }
 
-func (us *uStream) guessPlaybackSpeed(view byteView) (demoSpeed float64, isLowLatency bool) {
+func (us *uStream) guessPlaybackSpeed(view byteView, mode mvdTimeMode) (demoSpeed float64, isLowLatency bool) {
 	// Use 100% demo speed, because buffer adjustment works badly in demo case.
 	// Auto adjustment works badly because we always have too much or too less data in buffer in demo(mvd file) case.
 	if us.isDemo() {
@@ -232,8 +269,7 @@ func (us *uStream) guessPlaybackSpeed(view byteView) (demoSpeed float64, isLowLa
 		return 1, false // We are not ready, so use 100% demoSpeed.
 	}
 
-	isElapsedTime := (us.qp.extFlagsMVD1 & mvdPext1HiddenMessages) != 0
-	ms := us.mvdTime.pending(view, isElapsedTime)
+	ms := us.mvdTime.pending(view, mode.withExtensions(us.qp.extFlagsMVD1))
 
 	if !us.gameInProgress() {
 		expectedDelay = 0.5 // In prewar use short delay.
@@ -282,11 +318,11 @@ func (us *uStream) parseMVD() (err error) {
 	cur := view.cursor(0)
 	totalDiscard := 0
 	var totalMS int64
-	demoSpeed, isLowLatency := us.guessPlaybackSpeed(view)
+	mode := us.mvdSourceTimeMode()
+	demoSpeed, isLowLatency := us.guessPlaybackSpeed(view, mode)
 
 	for isLowLatency || us.curTime >= us.parseTime {
-		hidden := us.qp.extFlagsMVD1&mvdPext1HiddenMessages != 0
-		header, state := inspectMVDRecord(&cur, us.isTCP() && hidden)
+		header, state := inspectMVDRecord(&cur, mode.withExtensions(us.qp.extFlagsMVD1))
 		if state == mvdRecordInvalid {
 			return errors.New("corrupted MVD stream")
 		}
@@ -320,7 +356,7 @@ func (us *uStream) parseMVD() (err error) {
 	if err = us.rb.Discard(totalDiscard); err != nil {
 		return err
 	}
-	us.mvdTime.consume(totalDiscard, totalMS, us.qp.extFlagsMVD1&mvdPext1HiddenMessages != 0)
+	us.mvdTime.consume(totalDiscard, totalMS, mode.withExtensions(us.qp.extFlagsMVD1))
 	if !us.ioError || totalDiscard != 0 {
 		us.pumpRDSignons()
 	}

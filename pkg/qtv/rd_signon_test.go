@@ -202,7 +202,7 @@ func TestRDSignonPageLeavesRoomForReplies(t *testing.T) {
 	}
 	offset := ds.rdSignon.offset
 	cur := byteViewOf(us.rdSignon.data[offset:]).cursor(0)
-	next, status := inspectMVDRecord(&cur, false)
+	next, status := inspectMVDRecord(&cur, mvdContainerTime)
 	if status != mvdRecordComplete {
 		t.Fatal("expected another snapshot record")
 	}
@@ -552,7 +552,7 @@ func TestRDSignonSendsZeroViewHeight(t *testing.T) {
 	data := drainRDSignon(t, ds)
 	for len(data) != 0 {
 		cursor := byteViewOf(data).cursor(0)
-		header, status := inspectMVDRecord(&cursor, false)
+		header, status := inspectMVDRecord(&cursor, mvdContainerTime)
 		if status != mvdRecordComplete {
 			t.Fatal("invalid generated MVD")
 		}

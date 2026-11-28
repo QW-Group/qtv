@@ -29,7 +29,7 @@ func TestMVDRecordPayload(t *testing.T) {
 			input := append(bytes.Clone(tc.wire), 7, 6, 0, 0, 0, 0)
 			view := byteView{parts: [][]byte{input[:3], input[3:]}, size: len(input)}
 			cursor := view.cursor(0)
-			header, status := inspectMVDRecord(&cursor, false)
+			header, status := inspectMVDRecord(&cursor, mvdContainerTime)
 			if status != mvdRecordComplete || header.size != len(tc.wire) || header.kind != tc.kind || header.playersMask != tc.mask {
 				t.Fatalf("header=%+v status=%v", header, status)
 			}
@@ -47,27 +47,37 @@ func TestMVDTimeAppendConsumeAndFlags(t *testing.T) {
 	next := []byte{7, 4, 0, 0, 0, 0}
 	raw := append(append([]byte{}, first...), next...)
 	var c mvdTimeCache
-	if got := c.pending(byteViewOf(raw[:len(raw)-1]), false); got != 13 {
+	if got := c.pending(byteViewOf(raw[:len(raw)-1]), mvdContainerTime); got != 13 {
 		t.Fatal(got)
 	}
-	if got := c.pending(byteViewOf(raw), false); got != 20 {
+	if got := c.pending(byteViewOf(raw), mvdContainerTime); got != 20 {
 		t.Fatal(got)
 	}
-	if got := c.pending(byteViewOf(raw), false); got != 20 {
+	if got := c.pending(byteViewOf(raw), mvdContainerTime); got != 20 {
 		t.Fatal("double count", got)
 	}
 	raw[0] = 200
-	c.consume(len(first), 13, false)
-	if got := c.pending(byteViewOf(raw[len(first):]), false); got != 7 {
+	c.consume(len(first), 13, mvdContainerTime)
+	if got := c.pending(byteViewOf(raw[len(first):]), mvdContainerTime); got != 7 {
 		t.Fatal("normalized debit", got)
 	}
 	hidden := []byte{0, 3, 0, 0, 0, 0, 3, 0, 0, 0, 10, 0, 42}
 	c.reset()
-	if c.pending(byteViewOf(hidden), false) != 0 || c.pending(byteViewOf(hidden), true) != 42 || c.pending(byteViewOf(hidden), false) != 0 {
+	if c.pending(byteViewOf(hidden), mvdContainerTime) != 0 || c.pending(byteViewOf(hidden), mvdLivePauseTime) != 42 || c.pending(byteViewOf(hidden), mvdContainerTime) != 0 {
 		t.Fatal("hidden interpretation")
 	}
+	framed := []byte{7, 3, 0, 0, 0, 0, 7, 0, 0, 0, 1, 0, 0, 0, 10, 0, 42}
+	if c.pending(byteViewOf(framed[:16]), mvdLivePauseTime) != 0 ||
+		c.pending(byteViewOf(framed), mvdLivePauseTime) != 42 ||
+		c.pending(byteViewOf(framed), mvdLegacyPauseTime) != 7 {
+		t.Fatal("framed pause interpretation")
+	}
+	c.consume(len(framed), 7, mvdLegacyPauseTime)
+	if !c.valid || c.bytes != 0 || c.milliseconds != 0 {
+		t.Fatal("framed pause time was not debited", c)
+	}
 	c.reset()
-	if c.pending(byteViewOf(nil), true) != 0 {
+	if c.pending(byteViewOf(nil), mvdLivePauseTime) != 0 {
 		t.Fatal("reset")
 	}
 }
@@ -77,7 +87,7 @@ func TestMVDTimeAboveInt32(t *testing.T) {
 	records := int64(math.MaxInt32)/255 + 1
 	total := records * 255
 	c := mvdTimeCache{valid: true, bytes: int(records * 6), milliseconds: total}
-	c.consume(6, 255, false)
+	c.consume(6, 255, mvdContainerTime)
 	if c.milliseconds != total-255 || c.bytes != int(records*6)-6 {
 		t.Fatal(c)
 	}
@@ -86,16 +96,21 @@ func TestMVDTimeAboveInt32(t *testing.T) {
 // Every header split and paused/set/directed layout must match literal container rules.
 func TestMVDTimeFraming(t *testing.T) {
 	cases := []struct {
-		wire    []byte
-		elapsed bool
-		size    int
-		ms      byte
+		wire []byte
+		mode mvdTimeMode
+		size int
+		ms   byte
 	}{
-		{[]byte{9, 2, 0, 0, 0, 0, 0, 0, 0, 0}, false, 10, 9},
-		{[]byte{7, 6, 0, 0, 0, 0}, false, 6, 7},
-		{[]byte{8, 4, 0, 0, 0, 0}, false, 6, 8},
-		{[]byte{8, 5, 0, 0, 0, 0}, false, 6, 8},
-		{[]byte{0, 3, 0, 0, 0, 0, 3, 0, 0, 0, 10, 0, 42}, true, 13, 42},
+		{[]byte{9, 2, 0, 0, 0, 0, 0, 0, 0, 0}, mvdContainerTime, 10, 9},
+		{[]byte{7, 6, 0, 0, 0, 0}, mvdContainerTime, 6, 7},
+		{[]byte{8, 4, 0, 0, 0, 0}, mvdContainerTime, 6, 8},
+		{[]byte{8, 5, 0, 0, 0, 0}, mvdContainerTime, 6, 8},
+		{[]byte{0, 3, 0, 0, 0, 0, 3, 0, 0, 0, 10, 0, 42}, mvdLivePauseTime, 13, 42},
+		{[]byte{0, 3, 0, 0, 0, 0, 7, 0, 0, 0, 1, 0, 0, 0, 10, 0, 42}, mvdLivePauseTime, 17, 42},
+		// File playback and unrelated or malformed hidden blocks keep the container time.
+		{[]byte{7, 3, 0, 0, 0, 0, 7, 0, 0, 0, 1, 0, 0, 0, 10, 0, 42}, mvdContainerTime, 17, 7},
+		{[]byte{7, 3, 0, 0, 0, 0, 7, 0, 0, 0, 1, 0, 0, 0, 9, 0, 42}, mvdLivePauseTime, 17, 7},
+		{[]byte{7, 3, 0, 0, 0, 0, 7, 0, 0, 0, 2, 0, 0, 0, 10, 0, 42}, mvdLivePauseTime, 17, 7},
 	}
 	for _, tc := range cases {
 		for cut := 0; cut <= len(tc.wire); cut++ {
@@ -103,7 +118,7 @@ func TestMVDTimeFraming(t *testing.T) {
 			mid := cut / 2
 			v := byteView{parts: [][]byte{tc.wire[:mid], tc.wire[mid:cut]}, size: cut}
 			cursor := v.cursor(0)
-			header, state := inspectMVDRecord(&cursor, tc.elapsed)
+			header, state := inspectMVDRecord(&cursor, tc.mode)
 			if cut < len(tc.wire) {
 				if state != mvdRecordIncomplete {
 					t.Fatalf("cut%d: %d", cut, state)
@@ -115,7 +130,7 @@ func TestMVDTimeFraming(t *testing.T) {
 	}
 	for _, bad := range [][]byte{{0, 7}, {0, 6, 255, 255, 255, 255}} {
 		cur := byteViewOf(bad).cursor(0)
-		_, state := inspectMVDRecord(&cur, false)
+		_, state := inspectMVDRecord(&cur, mvdContainerTime)
 		if state != mvdRecordInvalid {
 			t.Fatal("bad accepted")
 		}
@@ -158,20 +173,20 @@ func TestMVDTimeRepeatedAppendConsume(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct {
-		name    string
-		elapsed bool
-	}{{"container", false}, {"hidden elapsed", true}} {
+		name string
+		mode mvdTimeMode
+	}{{"container", mvdContainerTime}, {"hidden elapsed", mvdLivePauseTime}} {
 		t.Run(tc.name, func(t *testing.T) {
 			var cache mvdTimeCache
 			var pending []byte
 			pos, record := 0, 0
 			check := func(step int) {
 				t.Helper()
-				complete, want := consistantMVD(pending, tc.elapsed)
+				complete, want := consistantMVD(pending, tc.mode)
 				mid := len(pending) / 2
 				view := byteView{parts: [][]byte{pending[:mid], pending[mid:]}, size: len(pending)}
 				for query := 0; query < 2; query++ {
-					if got := cache.pending(view, tc.elapsed); got != want || cache.bytes != complete {
+					if got := cache.pending(view, tc.mode); got != want || cache.bytes != complete {
 						t.Fatalf("step %d query %d: time=%d want=%d prefix=%d want=%d", step, query, got, want, cache.bytes, complete)
 					}
 				}
@@ -192,7 +207,7 @@ func TestMVDTimeRepeatedAppendConsume(t *testing.T) {
 					if len(pending)-used < len(fixture.wire) {
 						break
 					}
-					if tc.elapsed {
+					if tc.mode == mvdLivePauseTime {
 						rawMS += fixture.elapsedMS
 					} else {
 						rawMS += int64(fixture.wire[0])
@@ -202,7 +217,7 @@ func TestMVDTimeRepeatedAppendConsume(t *testing.T) {
 					record++
 				}
 				pending = pending[used:]
-				cache.consume(used, rawMS, tc.elapsed)
+				cache.consume(used, rawMS, tc.mode)
 				check(step)
 			}
 			if record != 64*len(fixtures) || cache.bytes != 0 || cache.milliseconds != 0 {

@@ -144,7 +144,7 @@ func TestRDSignonHiddenRouteAcrossMaps(t *testing.T) {
 	parse := func(record []byte) {
 		t.Helper()
 		cur := byteViewOf(record).cursor(0)
-		h, status := inspectMVDRecord(&cur, false)
+		h, status := inspectMVDRecord(&cur, mvdContainerTime)
 		if status != mvdRecordComplete {
 			t.Fatal("invalid test record")
 		}

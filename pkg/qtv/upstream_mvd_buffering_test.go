@@ -104,6 +104,75 @@ func TestMVDForwardingUsesHiddenElapsedTime(t *testing.T) {
 	}
 }
 
+func TestMVDForwardingSplitPauseRecord(t *testing.T) {
+	before := bufferingTestRecord(byte(mvdMsgAll), []byte{byte(svc_cdtrack), 7})
+	after := bufferingTestRecord(byte(mvdMsgAll), []byte{byte(svc_cdtrack), 9})
+	formats := []struct {
+		name string
+		wire []byte
+	}{
+		{"legacy", []byte{0, 3, 0, 0, 0, 0, 3, 0, 0, 0, 10, 0, 42}},
+		{"framed", []byte{0, 3, 0, 0, 0, 0, 7, 0, 0, 0, 1, 0, 0, 0, 10, 0, 42}},
+	}
+	for _, format := range formats {
+		for cut := 1; cut < len(format.wire); cut++ {
+			t.Run(fmt.Sprintf("%s/cut%d", format.name, cut), func(t *testing.T) {
+				us, viewer := bufferingTestStream(t, 0, false)
+				first := append(append([]byte{}, before...), format.wire[:cut]...)
+				if _, err := us.rb.WriteFull(first); err != nil {
+					t.Fatal(err)
+				}
+				if err := us.parseMVD(); err != nil {
+					t.Fatal(err)
+				}
+				if us.parseTime != 1000 || !bytes.Equal(queueBytes(us.rb), format.wire[:cut]) || !bytes.Equal(queueBytes(viewer.wb), before) {
+					t.Fatalf("partial pause consumed: clock=%d pending=%x forwarded=%x", us.parseTime, queueBytes(us.rb), queueBytes(viewer.wb))
+				}
+
+				second := append(append([]byte{}, format.wire[cut:]...), after...)
+				if _, err := us.rb.WriteFull(second); err != nil {
+					t.Fatal(err)
+				}
+				if err := us.parseMVD(); err != nil {
+					t.Fatal(err)
+				}
+				want := append(append(append([]byte{}, before...), format.wire...), after...)
+				want[len(before)] = 42
+				if us.parseTime != 1042 || us.qp.cdTrack != 9 || us.rb.Length() != 0 || !bytes.Equal(queueBytes(viewer.wb), want) {
+					t.Fatalf("completed pause: clock=%d track=%d pending=%d forwarded=%x", us.parseTime, us.qp.cdTrack, us.rb.Length(), queueBytes(viewer.wb))
+				}
+			})
+		}
+	}
+}
+
+func TestMVDRemoteRecordingKeepsFramedPauseTimestamp(t *testing.T) {
+	legacy := []byte{0, 3, 0, 0, 0, 0, 3, 0, 0, 0, 10, 0, 42}
+	framed := []byte{7, 3, 0, 0, 0, 0, 7, 0, 0, 0, 1, 0, 0, 0, 10, 0, 42}
+	for _, tc := range []struct{ source, begin string }{
+		{"file:match.mvd@host:28000", ""},
+		{"tcp:file:match.mvd@host:28000", ""},
+		{"tcp:1@host:28000", "file:match.mvd"},
+	} {
+		t.Run(tc.source, func(t *testing.T) {
+			us, viewer := bufferingTestStream(t, 0, false)
+			us.server = tc.source
+			us.hp.headers = map[string]string{"BEGIN": tc.begin}
+			wire := append(bytes.Clone(legacy), framed...)
+			if _, err := us.rb.WriteFull(wire); err != nil {
+				t.Fatal(err)
+			}
+			if err := us.parseMVD(); err != nil {
+				t.Fatal(err)
+			}
+			wire[0] = 42 // Preserve handling of old remote recordings.
+			if got := queueBytes(viewer.wb); us.parseTime != 1049 || !bytes.Equal(got, wire) {
+				t.Fatalf("clock=%d forwarded=%x want=%x", us.parseTime, got, wire)
+			}
+		})
+	}
+}
+
 func TestMVDNoProgressKeepsRebuffering(t *testing.T) {
 	for _, delay := range []int{7, 15} {
 		for _, partial := range [][]byte{nil, {0}, {0, 6, 2, 0, 0, 0, 32}} {
@@ -245,7 +314,7 @@ func TestMVDPlaybackSpeedUnderQueuePressure(t *testing.T) {
 		// Successive queue contents are independent, so rebuild the time cache.
 		us.mvdTime.reset()
 		view := byteViewOf(bytes.Repeat(record, tc.records))
-		got, lowLatency := us.guessPlaybackSpeed(view)
+		got, lowLatency := us.guessPlaybackSpeed(view, us.mvdSourceTimeMode())
 		if lowLatency || got < tc.want-0.0001 || got > tc.want+0.0001 {
 			t.Fatalf("queue bytes %d: speed = %v, low latency = %v, want %v", view.size, got, lowLatency, tc.want)
 		}
@@ -256,7 +325,7 @@ func TestMVDPlaybackSpeedUnderQueuePressure(t *testing.T) {
 	us.mvdTime.reset()
 	record[0] = 250
 	view := byteViewOf(bytes.Repeat(record, 38))
-	if got, _ := us.guessPlaybackSpeed(view); got < 1.35 || got > 1.36 {
+	if got, _ := us.guessPlaybackSpeed(view, us.mvdSourceTimeMode()); got < 1.35 || got > 1.36 {
 		t.Fatalf("speed at 95%% with 9.5 seconds queued = %v, want 9.5/7", got)
 	}
 }
