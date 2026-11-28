@@ -359,7 +359,7 @@ func TestDownstreamQueueMVDMultiRecord(t *testing.T) {
 
 	wire := queueBytes(ds.wb)
 	cursor := byteViewOf(wire).cursor(0)
-	header, status := inspectMVDRecord(&cursor, false)
+	header, status := inspectMVDRecord(&cursor, mvdContainerTime)
 	if status != mvdRecordComplete || header.size != len(wire) ||
 		header.kind != mvdMsgMulti || header.playersMask != players {
 		t.Fatalf("invalid MVD multi record % x: status=%v header=%+v", wire, status, header)

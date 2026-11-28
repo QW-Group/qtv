@@ -117,7 +117,7 @@ func rdTestDecodeSnapshot(t *testing.T, data []byte) (*qProtocol, int) {
 		}
 		// Parse the real recipient header, including directed player statistics.
 		cur := byteViewOf(data[:size]).cursor(0)
-		record, status := inspectMVDRecord(&cur, false)
+		record, status := inspectMVDRecord(&cur, mvdContainerTime)
 		if status != mvdRecordComplete || record.size != size {
 			t.Fatalf("snapshot framing: status=%d size=%d want=%d", status, record.size, size)
 		}

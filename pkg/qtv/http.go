@@ -387,7 +387,7 @@ func (sv *httpSv) uploadFile(w http.ResponseWriter, r *http.Request) {
 
 	// Minor validation if it really a MVD file.
 	validationLen := ix.Min(len(fileBytes), 1024*100)
-	if _, ms := consistantMVD(fileBytes[:validationLen], false); ms < 500 {
+	if _, ms := consistantMVD(fileBytes[:validationLen], mvdContainerTime); ms < 500 {
 		w.WriteHeader(http.StatusForbidden)
 		fmt.Fprintf(w, "Invalid upload file, only mvd files supported\n")
 		return

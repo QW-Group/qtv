@@ -197,7 +197,7 @@ func (us *uStream) pageRDSignon(ds *dStream) error {
 	available := ds.wb.Available()
 	cursor := byteViewOf(snapshot.data[start:]).cursor(0)
 	for cursor.left > 0 {
-		header, status := inspectMVDRecord(&cursor, false)
+		header, status := inspectMVDRecord(&cursor, mvdContainerTime)
 		if status != mvdRecordComplete {
 			return errors.New("invalid generated RD snapshot record")
 		}
